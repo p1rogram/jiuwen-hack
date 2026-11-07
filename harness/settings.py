@@ -61,5 +61,9 @@ def load_settings(budget: float | None = None, out: str | None = None) -> Settin
                     log_dir=log_dir, budget=final_budget)
 
 
+def load_config(name: str) -> dict[str, Any]:
+    return json.loads((CONFIG_PATH.parent / name).read_text(encoding="utf-8"))
+
+
 def load_prompt(name: str) -> str:
     return (PROMPTS_DIR / name).read_text(encoding="utf-8")

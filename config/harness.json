@@ -38,5 +38,10 @@
     "search": 300,
     "default": 1000
   },
+  "feasibility": {
+    "enabled": true,
+    "skip_severities": ["hard"],
+    "config_file": "feasibility.json"
+  },
   "log_dir_default": "logs"
 }

@@ -1,0 +1,22 @@
+{
+  "first_names": ["Alice", "Boris", "Chen", "Dmitri", "Elena", "Farid", "Grace", "Hiro", "Irina", "Jonas",
+                  "Kira", "Leo", "Maya", "Nikolai", "Olga", "Pavel", "Quinn", "Rosa", "Sergei", "Tanya"],
+  "last_names": ["Smith", "Novak", "Haddad", "Wang", "Kowalski", "Petrov", "Sato", "Garcia", "Muller",
+                 "Ivanova", "Lopez", "Okafor", "Berg", "Rossi"],
+  "companies": ["Arktika Labs", "Bluefin Systems", "Cobalt Works", "Dune Robotics", "Ember Bio", "Fjord Data",
+                "Granite AI", "Helix Motors", "Iris Optics", "Juniper Foods", "Kestrel Energy", "Lumen Health",
+                "Marlin Logistics", "Nimbus Cloud", "Onyx Mining", "Prism Media", "Quartz Finance",
+                "Redwood Textiles", "Sable Security", "Tidal Marine", "Umber Games", "Vertex Chemicals",
+                "Willow Farms", "Yarrow Pharma"],
+  "phantom_companies": ["Zephyr Holdings", "Quasar Freight", "Obsidian Ventures", "Halcyon Trading"],
+  "cities": ["Medan", "Tbilisi", "Leeds", "Quito", "Graz", "Osaka", "Lisbon", "Tallinn", "Porto", "Bergen",
+             "Lyon", "Cusco", "Durban", "Hanoi", "Izmir", "Kazan", "Malmo", "Nantes", "Perth", "Riga",
+             "Sapporo", "Tartu", "Utrecht", "Valencia"],
+  "products_base": ["widget", "gadget", "gizmo", "sprocket"],
+  "products_extra": ["doohickey", "flange", "bracket", "valve", "bolt", "spring"],
+  "products_absent": ["thingamajig", "whatsit", "lantern", "sprinkler"],
+  "regions": ["north", "south", "east", "west"],
+  "regions_absent": ["central", "northeast"],
+  "math_units_absent": ["crates", "pallets", "trucks", "barrels"],
+  "vague_words": ["some", "several", "a few"]
+}

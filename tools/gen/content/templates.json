@@ -1,0 +1,31 @@
+{
+  "answer_suffix": "Work only inside the current directory. When you are done, write ONLY the final answer to the file answer.txt in the current directory (for example with bash: echo 42 > answer.txt).",
+  "coding": "Run `python3 test_mylib.py` in the current directory; some tests fail. Fix the bugs in mylib.py (do not edit the tests) until all tests pass. Work only inside the current directory. When you are done, write ONLY the word DONE to the file answer.txt in the current directory (for example with bash: echo 42 > answer.txt).",
+  "data": {
+    "intro": "The file sales.csv has columns order_id,region,product,month,units,price ({rows} rows).",
+    "units": "How many units of product '{product}' were sold in months {m1} through {m2} inclusive?",
+    "units_region": "How many units of product '{product}' were sold in region '{region}' in months {m1} through {m2} inclusive?",
+    "revenue": "What was the total revenue (sum of units * price) of product '{product}' in months {m1} through {m2} inclusive?",
+    "tool": "Use bash with python3 to compute it."
+  },
+  "math": {
+    "start": "A warehouse starts with {n} boxes.",
+    "start_unknown": "A warehouse starts with an unknown number of boxes.",
+    "ship": "It ships {x} boxes per day for {d} days.",
+    "receive": "It receives {k} deliveries of {m} boxes each.",
+    "sell": "It sells {x} boxes.",
+    "split": "Then the stock is split equally into {n} warehouses and it keeps one share (rounded down).",
+    "double": "Then the stock is doubled by merging with a sister warehouse.",
+    "question": "How many {unit} does it have at the end?",
+    "tool": "Compute it with the bash tool (python3 -c)."
+  },
+  "search": {
+    "intro": "The directory kb/ contains a small knowledge base of markdown files.",
+    "born": "In which year was {p} born?",
+    "employer_hq": "In which city is the headquarters of {p}'s employer?",
+    "employer_founded": "In which year was {p}'s employer founded?",
+    "mentor_born": "In which year was {p}'s mentor born?",
+    "mentor_employer_hq": "In which city is the headquarters of the employer of {p}'s mentor?",
+    "tool": "Use the file tools or bash (ls, grep, cat) to find it."
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "files": {
+    "extensions": ["py", "csv", "tsv", "json", "txt", "md", "xlsx", "yaml", "yml", "db", "sqlite"],
+    "ignore": ["answer.txt"],
+    "output_verbs": ["write", "create", "save", "produce", "output", "generate", "store"],
+    "output_window_chars": 40,
+    "soft_extensions": ["py"]
+  },
+  "data": {
+    "columns_declared_re": "columns\\s+([A-Za-z_][\\w]*(?:\\s*,\\s*[A-Za-z_][\\w]*)+)",
+    "column_triggers": {
+      "units": ["units"],
+      "price": ["price", "revenue"],
+      "region": ["region '"],
+      "product": ["product '"],
+      "month": ["month"]
+    },
+    "value_filters": {
+      "product": "product '([^']+)'",
+      "region": "region '([^']+)'"
+    },
+    "months_re": "months?\\s+(\\d+)\\s+(?:through|to|-)\\s+(\\d+)",
+    "max_bytes": 50000000
+  },
+  "math": {
+    "vague_re": "\\b(an unknown number of|a certain number of|an unspecified number of|some|several|a few|a number of)\\s+[a-z]+",
+    "zero_res": ["\\binto 0\\b", "\\bdivided (?:equally )?by 0\\b", "\\bamong 0\\b", "\\bbetween 0\\b"],
+    "unit_re": "how many ([a-z]+)"
+  },
+  "search": {
+    "max_files": 5000,
+    "attributes": {
+      "born": {"keywords": ["born", "birth"], "labels": ["born", "birth year", "year of birth", "birth"]},
+      "headquarters": {"keywords": ["headquarters", "head office", "hq"], "labels": ["headquarters", "head office", "hq"]},
+      "founded": {"keywords": ["founded", "established"], "labels": ["founded", "established"]}
+    },
+    "relations": {
+      "employer": {"keywords": ["employer", "works for", "work for", "works at"], "labels": ["employer", "company", "works at"]},
+      "mentor": {"keywords": ["mentor"], "labels": ["mentor"]}
+    },
+    "name_stopwords": ["In", "Which", "What", "When", "Where", "Who", "Whom", "Whose", "How", "The", "A", "An", "Is", "Was", "Does", "Did"]
+  }
+}

@@ -12,10 +12,11 @@ from pathlib import Path
 
 from harness.budget import BudgetLedger, TokenPricing
 from harness.calllog import JsonlLog
+from harness.feasibility import FeasibilityDetector, Signal, blocking
 from harness.llm import BudgetExhausted, LlmGateway
 from harness.planner import TaskPlanner
 from harness.results import ResultsWriter
-from harness.settings import Settings, load_settings
+from harness.settings import Settings, load_config, load_settings
 from harness.snapshot import WorkspaceSnapshot
 from harness.solver import Stage1Solver
 from harness.tasks import Task, load_tasks
@@ -48,6 +49,9 @@ class Harness:
         self.planner = TaskPlanner(settings.section("cost_estimate_by_type"))
         self.writer = ResultsWriter(settings.out_path)
         self.parallel = int(settings.raw["parallel_sessions"])
+        feas = settings.section("feasibility")
+        self.detector = FeasibilityDetector(load_config(feas["config_file"])) if feas["enabled"] else None
+        self.skip_severities = feas["skip_severities"]
 
     async def run(self, tasks: list[Task]) -> list[dict]:
         sem = asyncio.Semaphore(self.parallel)
@@ -60,6 +64,12 @@ class Harness:
         return await asyncio.gather(*(one(t) for t in ordered))
 
     async def _solve_one(self, task: Task) -> dict:
+        signals: list[Signal] = await asyncio.to_thread(self.detector.check, task) if self.detector else []
+        if blocking(signals, self.skip_severities):
+            rec = {"task_id": task.task_id, "type": task.task_type, "reward": task.reward,
+                   "status": "skipped_infeasible", "signals": [s.as_dict() for s in signals]}
+            self.log.write({"kind": "task", **rec})
+            return rec
         estimate = self.planner.estimate(task)
         if not self.ledger.can_afford(estimate):
             rec = {"task_id": task.task_id, "status": "skipped_budget", "estimate": estimate}
@@ -82,6 +92,7 @@ class Harness:
                "status": "verified" if outcome.verified else "unverified", "answer": outcome.answer,
                "attempts": outcome.attempts, "cost": round(outcome.cost, 1), "estimate": estimate,
                "problem": outcome.problem[:300], "calls": outcome.calls,
+               "signals": [s.as_dict() for s in signals],
                "sec": round(time.monotonic() - started, 1)}
         self.log.write({"kind": "task", **rec})
         return rec
