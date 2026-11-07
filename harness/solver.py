@@ -7,8 +7,7 @@ from typing import Any
 
 from harness.executor import run_script
 from harness.llm import LlmGateway
-from harness.settings import load_prompt
-from harness.snapshot import WorkspaceSnapshot
+from harness.prompting import Prepared, Stage1Prompt
 from harness.tasks import Task
 from harness.verifier import Verdict, Verifier
 
@@ -38,25 +37,19 @@ def extract_code(text: str) -> str | None:
 
 
 class Stage1Solver:
-    def __init__(self, gateway: LlmGateway, snapshot: WorkspaceSnapshot, verifier: Verifier,
+    def __init__(self, gateway: LlmGateway, prompt: Stage1Prompt, verifier: Verifier,
                  model: str, cfg: dict[str, Any]):
         self._gw = gateway
-        self._snapshot = snapshot
+        self._prompt = prompt
         self._verifier = verifier
         self._model = model
         self._attempts = int(cfg["attempts"])
         self._timeout = float(cfg["script_timeout_sec"])
-        self._system = load_prompt("system.txt")
-        self._user_tpl = load_prompt("stage1_user.txt")
-        self._retry_tpl = load_prompt("stage1_retry.txt")
 
-    async def solve(self, task: Task) -> Outcome:
-        outcome = Outcome(task.task_id)
-        snap = await self._snapshot.build(task)
-        messages = [
-            {"role": "system", "content": self._system},
-            {"role": "user", "content": self._user_tpl.format(instruction=task.instruction, snapshot=snap)},
-        ]
+    async def solve(self, prepared: Prepared, outcome: Outcome) -> Outcome:
+        """Заполняет outcome по ходу: при исключении в нём остаются уже оплаченные вызовы."""
+        task = prepared.task
+        messages = list(prepared.messages)
         for attempt in range(1, self._attempts + 1):
             reply = await self._gw.ask(self._model, messages, task_id=task.task_id, stage=f"stage1.{attempt}")
             outcome.attempts = attempt
@@ -73,7 +66,7 @@ class Stage1Solver:
             outcome.problem = verdict.problem
             messages += [
                 {"role": "assistant", "content": reply.text},
-                {"role": "user", "content": self._retry_tpl.format(problem=verdict.problem)},
+                self._prompt.retry(verdict.problem),
             ]
         return outcome
 

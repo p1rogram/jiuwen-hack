@@ -43,8 +43,13 @@ def _find_key(names: list[str], dotenv: dict[str, str]) -> str:
     return ""
 
 
+def load_settings_raw() -> dict[str, Any]:
+    """Только config/harness.json, без ключа API — для офлайн-инструментов."""
+    return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+
+
 def load_settings(budget: float | None = None, out: str | None = None) -> Settings:
-    raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    raw = load_settings_raw()
     dotenv = _dotenv_values()
     base_url = _find_key(raw["base_url_env_names"], dotenv) or raw["llm_base_url_default"]
     api_key = _find_key(raw["api_key_env_names"], dotenv)

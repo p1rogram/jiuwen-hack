@@ -12,6 +12,7 @@ from openjiuwen.core.foundation.llm import Model, ModelClientConfig, ModelReques
 
 from harness.budget import BudgetLedger, TokenPricing, Usage
 from harness.calllog import JsonlLog
+from harness.prompting import prompt_chars
 
 RESET_RE = re.compile(r"Limit resets at: (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) UTC")
 
@@ -92,12 +93,12 @@ class LlmGateway:
             reasoning_tokens=int(getattr(meta, "reasoning_tokens", 0) or 0),
         )
         cost = self._pricing.cost(usage)
-        self._ledger.charge(cost)
+        self._ledger.charge(cost, task_id)
         text = msg.content if isinstance(msg.content, str) else str(msg.content or "")
         reasoning = msg.reasoning_content or ""
         self._log.write({
             "kind": "llm_call", "task_id": task_id, "stage": stage, "model": model,
-            "input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
+            "prompt_chars": prompt_chars(messages), "input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
             "reasoning_tokens": usage.reasoning_tokens, "reasoning_chars": len(reasoning),
             "content_chars": len(text), "cost": round(cost, 1), "latency_sec": round(latency, 2),
             "budget_spent": round(self._ledger.spent, 1),

@@ -1,0 +1,49 @@
+{
+  "stage1": {
+    "retry_prompt_chars": 1599,
+    "prior_weight": 5.0,
+    "types": {
+      "coding": {
+        "chars_per_token": 3.512,
+        "out_mean": 416.3,
+        "out_p90": 728.0,
+        "p_retry": 0.0152,
+        "n": 32
+      },
+      "data_analysis": {
+        "chars_per_token": 3.313,
+        "out_mean": 90.2,
+        "out_p90": 99.0,
+        "p_retry": 0.0152,
+        "n": 32
+      },
+      "math": {
+        "chars_per_token": 3.988,
+        "out_mean": 140.4,
+        "out_p90": 184.0,
+        "p_retry": 0.0161,
+        "n": 30
+      },
+      "search": {
+        "chars_per_token": 2.724,
+        "out_mean": 208.7,
+        "out_p90": 301.0,
+        "p_retry": 0.0556,
+        "n": 26
+      },
+      "default": {
+        "chars_per_token": 3.007,
+        "out_mean": 215.4,
+        "out_p90": 444.0,
+        "p_retry": 0.0124,
+        "n": 120
+      }
+    }
+  },
+  "source": [
+    "run-20261107-115711.jsonl",
+    "run-20261107-120828.jsonl",
+    "run-20261107-115812.jsonl",
+    "run-20261107-120934.jsonl"
+  ]
+}

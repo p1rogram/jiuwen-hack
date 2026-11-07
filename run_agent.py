@@ -12,13 +12,15 @@ from pathlib import Path
 
 from harness.budget import BudgetLedger, TokenPricing
 from harness.calllog import JsonlLog
+from harness.cost_model import CostModel
 from harness.feasibility import FeasibilityDetector, Signal, blocking
 from harness.llm import BudgetExhausted, LlmGateway
 from harness.planner import TaskPlanner
+from harness.prompting import Prepared, Stage1Prompt
 from harness.results import ResultsWriter
 from harness.settings import Settings, load_config, load_settings
 from harness.snapshot import WorkspaceSnapshot
-from harness.solver import Stage1Solver
+from harness.solver import Outcome, Stage1Solver
 from harness.tasks import Task, load_tasks
 from harness.verifier import Verifier
 
@@ -43,10 +45,11 @@ class Harness:
                              TokenPricing(acc["input_weight"], acc["reasoning_in_completion"]),
                              self.ledger, self.log)
         stage1_cfg = settings.section("stage1")
-        self.solver = Stage1Solver(gateway, WorkspaceSnapshot(settings.section("snapshot")),
-                                   Verifier(stage1_cfg["error_tail_chars"]),
+        self.prompt = Stage1Prompt(WorkspaceSnapshot(settings.section("snapshot")))
+        self.solver = Stage1Solver(gateway, self.prompt, Verifier(stage1_cfg["error_tail_chars"]),
                                    model or settings.section("models")["stage1"], stage1_cfg)
-        self.planner = TaskPlanner(settings.section("cost_estimate_by_type"))
+        cost_model = CostModel(load_config(settings.raw["cost_model_file"]), acc["input_weight"])
+        self.planner = TaskPlanner(cost_model, self.ledger)
         self.writer = ResultsWriter(settings.out_path)
         self.parallel = int(settings.raw["parallel_sessions"])
         feas = settings.section("feasibility")
@@ -55,47 +58,72 @@ class Harness:
 
     async def run(self, tasks: list[Task]) -> list[dict]:
         sem = asyncio.Semaphore(self.parallel)
-        ordered = self.planner.order(tasks)
 
-        async def one(task: Task) -> dict:
+        async def limited(coro):
             async with sem:
-                return await self._solve_one(task)
+                return await coro
 
-        return await asyncio.gather(*(one(t) for t in ordered))
+        # фаза A без LLM: отсев невыполнимых и сборка промптов — нужна до выбора, цена входа зависит от промпта
+        staged = await asyncio.gather(*(limited(self._prepare(t)) for t in tasks))
+        skipped = [s for s in staged if isinstance(s, dict)]
+        prepared = self.planner.order([s for s in staged if isinstance(s, Prepared)])
+        # фаза B: старт в порядке выгоды, допуск каждой задачи — в момент старта, по оценке с поправкой
+        first = await asyncio.gather(*(limited(self._solve_one(p, final=False)) for p in prepared))
+        # не поместившиеся — ещё раз, когда резервы задач в работе сменились фактической ценой
+        deferred = [p for p, r in zip(prepared, first) if r is None]
+        second = await asyncio.gather(*(limited(self._solve_one(p, final=True)) for p in deferred))
+        return skipped + [r for r in first if r is not None] + list(second)
 
-    async def _solve_one(self, task: Task) -> dict:
-        signals: list[Signal] = await asyncio.to_thread(self.detector.check, task) if self.detector else []
-        if blocking(signals, self.skip_severities):
-            rec = {"task_id": task.task_id, "type": task.task_type, "reward": task.reward,
-                   "status": "skipped_infeasible", "signals": [s.as_dict() for s in signals]}
-            self.log.write({"kind": "task", **rec})
-            return rec
-        estimate = self.planner.estimate(task)
-        if not self.ledger.can_afford(estimate):
-            rec = {"task_id": task.task_id, "status": "skipped_budget", "estimate": estimate}
-            self.log.write({"kind": "task", **rec})
-            return rec
-        started = time.monotonic()
-        try:
-            outcome = await self.solver.solve(task)
-        except BudgetExhausted:
-            rec = {"task_id": task.task_id, "status": "budget_exhausted"}
-            self.log.write({"kind": "task", **rec})
-            return rec
-        except Exception as exc:  # одна упавшая задача не должна валить прогон
-            rec = {"task_id": task.task_id, "status": "error", "error": f"{type(exc).__name__}: {exc}"[:500]}
-            self.log.write({"kind": "task", **rec})
-            return rec
-        if outcome.answer:
-            self.writer.record(task, outcome.answer)
-        rec = {"task_id": task.task_id, "type": task.task_type, "reward": task.reward,
-               "status": "verified" if outcome.verified else "unverified", "answer": outcome.answer,
-               "attempts": outcome.attempts, "cost": round(outcome.cost, 1), "estimate": estimate,
-               "problem": outcome.problem[:300], "calls": outcome.calls,
-               "signals": [s.as_dict() for s in signals],
-               "sec": round(time.monotonic() - started, 1)}
+    def _record(self, rec: dict) -> dict:
         self.log.write({"kind": "task", **rec})
         return rec
+
+    async def _prepare(self, task: Task) -> Prepared | dict:
+        try:
+            signals: list[Signal] = await asyncio.to_thread(self.detector.check, task) if self.detector else []
+            if blocking(signals, self.skip_severities):
+                return self._record({"task_id": task.task_id, "type": task.task_type, "reward": task.reward,
+                                     "status": "skipped_infeasible", "signals": [s.as_dict() for s in signals]})
+            prepared = await self.prompt.build(task)
+        except Exception as exc:  # одна упавшая задача не должна валить прогон: фаза A общая для всех
+            return self._record({"task_id": task.task_id, "status": "error",
+                                 "error": f"prepare {type(exc).__name__}: {exc}"[:500]})
+        prepared.signals = signals
+        return prepared
+
+    async def _solve_one(self, prepared: Prepared, final: bool) -> dict | None:
+        """None — не поместилась и final=False: задача отложена до второго прохода."""
+        task = prepared.task
+        head = {"task_id": task.task_id, "type": task.task_type, "reward": task.reward,
+                "prompt_chars": prepared.prompt_chars}
+        est = self.planner.admit(prepared)
+        if est is None:
+            if not final:
+                return None
+            e = self.planner.estimate(prepared)
+            return self._record({**head, "status": "skipped_budget", "estimate_mean": round(e.mean, 1),
+                                 "estimate_high": round(e.high, 1), "available": round(self.ledger.available, 1)})
+        head |= {"estimate_mean": round(est.mean, 1), "estimate_high": round(est.high, 1)}
+        started = time.monotonic()
+        # Outcome создаётся здесь: при исключении в нём остаются уже оплаченные вызовы — для журнала и поправки
+        outcome = Outcome(task.task_id)
+        try:
+            await self.solver.solve(prepared, outcome)
+        except BudgetExhausted:
+            return self._record({**head, "status": "budget_exhausted", "cost": round(outcome.cost, 1),
+                                 "calls": outcome.calls})
+        except Exception as exc:  # одна упавшая задача не должна валить прогон
+            return self._record({**head, "status": "error", "error": f"{type(exc).__name__}: {exc}"[:500],
+                                 "cost": round(outcome.cost, 1), "calls": outcome.calls})
+        finally:
+            self.planner.finish(prepared, outcome.calls[0] if outcome.calls else None)
+        if outcome.answer:
+            self.writer.record(task, outcome.answer)
+        return self._record({**head, "status": "verified" if outcome.verified else "unverified",
+                             "answer": outcome.answer, "attempts": outcome.attempts, "cost": round(outcome.cost, 1),
+                             "problem": outcome.problem[:300], "calls": outcome.calls,
+                             "signals": [s.as_dict() for s in prepared.signals],
+                             "sec": round(time.monotonic() - started, 1)})
 
 
 def main() -> None:

@@ -31,13 +31,7 @@
     "csv_sample_rows": 5,
     "test_output_chars": 2500
   },
-  "cost_estimate_by_type": {
-    "coding": 1200,
-    "data_analysis": 400,
-    "math": 300,
-    "search": 300,
-    "default": 1000
-  },
+  "cost_model_file": "cost_model.json",
   "feasibility": {
     "enabled": true,
     "skip_severities": ["hard"],
