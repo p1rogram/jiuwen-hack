@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+import harness.jiuwen_logging  # noqa: F401  — до openjiuwen: тихая консоль
 from openjiuwen.core.foundation.llm import Model, ModelClientConfig, ModelRequestConfig
 
 from harness.budget import BudgetLedger, TokenPricing, Usage

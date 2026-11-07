@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import sys
 import time
 from pathlib import Path
 
+import harness.jiuwen_logging  # noqa: F401  — первым: openjiuwen не печатает в консоль
 from harness.budget import BudgetLedger, TokenPricing
 from harness.calllog import JsonlLog
+from harness.console import ConsoleView
 from harness.cost_model import CostModel
 from harness.decision import DecisionPolicy
 from harness.feasibility import FeasibilityDetector, Signal, blocking
@@ -61,7 +62,7 @@ class Harness:
         success = SuccessModel(load_config(settings.raw["success_model_file"]))
         self.policy = DecisionPolicy(success, cost_model, self.ledger)
         self.solver = TaskPipeline(stage1, stage2, self.policy, success, self.lam,
-                                   load_prompt("stage2_forced.txt") if force_stage2 else None)
+                                   load_prompt("stage2_forced.txt") if force_stage2 else None, self.log)
         self.planner = TaskPlanner(cost_model, self.ledger, self.policy.priority)
         self.pending: dict[str, Prepared] = {}  # ещё не начатые задачи — по ним считается λ
         self.writer = ResultsWriter(settings.out_path)
@@ -71,6 +72,7 @@ class Harness:
         self.skip_severities = feas["skip_severities"]
 
     async def run(self, tasks: list[Task]) -> list[dict]:
+        self.log.write({"kind": "run_start", "tasks": len(tasks), "budget": self.ledger.total})
         sem = asyncio.Semaphore(self.parallel)
 
         async def limited(coro):
@@ -135,6 +137,8 @@ class Harness:
         self.pending.pop(task.task_id, None)
         head |= {"estimate_mean": round(est.mean, 1), "estimate_high": round(est.high, 1),
                  "lambda": round(self.lam(), 5), **self.policy.journal(prepared)}
+        self.log.write({"kind": "task_start", "task_id": task.task_id, "estimate_high": head["estimate_high"],
+                        "lambda": head["lambda"]})
         started = time.monotonic()
         # Outcome создаётся здесь: при исключении в нём остаются уже оплаченные вызовы — для журнала и поправки
         outcome = Outcome(task.task_id)
@@ -168,11 +172,16 @@ def main() -> None:
     if args.only:
         tasks = [t for t in tasks if t.task_id in set(args.only)]
     harness = Harness(settings, args.model, args.force_stage2)
-    results = asyncio.run(harness.run(tasks))
-    for r in results:
-        print(f"{r['task_id']:<22} {r['status']:<16} cost={r.get('cost', 0):>7} answer={r.get('answer', '')!r}",
-              file=sys.stderr)
-    print(f"spent {harness.ledger.spent:.0f} of {harness.ledger.total:.0f}", file=sys.stderr)
+    # консоль только смотрит журнал: строки задач и развилок по ходу, прогресс в stderr, сводка в конце
+    console = ConsoleView(load_config("console.json"), harness.ledger)
+    harness.log.subscribe(console)
+    asyncio.run(run_with_console(harness, tasks, console))
+    console.summary()
+
+
+async def run_with_console(harness: Harness, tasks: list[Task], console: ConsoleView) -> list[dict]:
+    async with console.live():
+        return await harness.run(tasks)
 
 
 if __name__ == "__main__":

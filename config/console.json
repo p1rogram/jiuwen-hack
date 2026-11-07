@@ -1,0 +1,47 @@
+{
+  "openjiuwen": {
+    "outputs": ["file"],
+    "ignore_syntax_warnings_from": ["pysbd"]
+  },
+  "enabled": true,
+  "refresh_sec": 0.5,
+  "plain_every_sec": 30,
+  "answer_max_chars": 40,
+  "empty_answer": "-",
+  "answer_ellipsis": "…",
+  "terminal_width_default": 120,
+  "terminal_width_min": 20,
+  "numbers": {
+    "thousands_sep": " ",
+    "decimal_sep": ",",
+    "emv_digits": 1,
+    "cost_digits": 0,
+    "wait_digits": 0,
+    "lambda_significant": 3
+  },
+  "fallback_chars": {"→": "->", "λ": "lambda", "—": "-", "−": "-", "…": "..."},
+  "status_labels": {
+    "verified": "решена",
+    "unverified": "не проверена",
+    "skipped_infeasible": "невыполнима",
+    "skipped_low_value": "невыгодна",
+    "skipped_budget": "не влезла в бюджет",
+    "budget_exhausted": "бюджет кончился",
+    "error": "ошибка"
+  },
+  "formats": {
+    "progress": "[{done:>3}/{total} | в работе {running} | осталось {left} ]  токены {spent} / резерв {held} / {budget}  λ {lam}  429: {rate_limits}",
+    "decision": "{task_id}: {failure} → {choice} (EMV {emv} > {other} {other_emv}{other_mark})",
+    "decision_alt": "{task_id}: {failure} → {choice} (EMV {emv}; {other} {other_emv}{other_mark})",
+    "decision_single": "{task_id}: {failure} → {choice} (EMV {emv}, одна ветка)",
+    "decision_stop": "{task_id}: {failure} → stop (лучшая {other} EMV {other_emv}{other_mark})",
+    "decision_stop_empty": "{task_id}: {failure} → stop",
+    "no_fit_mark": " не влезает",
+    "task": "{task_id}: {status}, цена {cost}, ответ {answer}{stage2}",
+    "task_stage2": ", этап 2: шагов {steps}, стоп {stop}",
+    "rate_limit": "429: пауза {wait} с (задача {task_id})",
+    "summary": "Итог: {done}/{total} задач — {statuses}; токены {spent} из {budget}; этап 2 спас {rescued} из {stage2}",
+    "summary_status": "{label} {n}",
+    "summary_sep": ", "
+  }
+}
