@@ -1,0 +1,8 @@
+.env
+*.env
+logs/
+__pycache__/
+*.pyc
+.venv/
+data/task-examples/__MACOSX/
+.DS_Store
