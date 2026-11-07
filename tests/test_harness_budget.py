@@ -8,9 +8,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from harness.budget import BudgetLedger  # noqa: E402
+from harness.decision import DecisionPolicy  # noqa: E402
 from harness.llm import BudgetExhausted  # noqa: E402
 from harness.planner import TaskPlanner  # noqa: E402
 from harness.prompting import Prepared  # noqa: E402
+from harness.success_model import SuccessModel  # noqa: E402
 from harness.tasks import Task  # noqa: E402
 from run_agent import Harness  # noqa: E402
 from tests.test_cost_model import model, stats  # noqa: E402
@@ -51,12 +53,18 @@ class FakeSolver:
         return outcome
 
 
-def harness(budget, cost, types, raise_exc=None, parallel=5):
+SUCCESS = {"branches": {"default": {"default": {"alpha": 1, "beta": 0}}}, "p_feasible": {"default": {"alpha": 1, "beta": 1}}}
+
+
+def harness(budget, cost_per_task, types, raise_exc=None, parallel=5):
     h = Harness.__new__(Harness)
     h.ledger = BudgetLedger(budget)
     h.log, h.writer, h.prompt = FakeLog(), FakeWriter(), FakePrompt()
-    h.solver = FakeSolver(h.ledger, cost, raise_exc)
-    h.planner = TaskPlanner(model(types), h.ledger)
+    h.solver = FakeSolver(h.ledger, cost_per_task, raise_exc)
+    cost = model(types)
+    h.policy = DecisionPolicy(SuccessModel(SUCCESS), cost, h.ledger)
+    h.planner = TaskPlanner(cost, h.ledger, h.policy.priority)
+    h.pending = {}
     h.parallel, h.detector, h.skip_severities = parallel, None, ["hard"]
     return h
 

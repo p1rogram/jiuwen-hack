@@ -1,0 +1,160 @@
+{
+  "priors": {
+    "note": "вручную: stage1 — gen3 151/151 со скидкой на скрытый набор; retry и stage2 — осторожные, данных о провалах нет",
+    "branches": {
+      "default": {
+        "default": {
+          "alpha": 1.0,
+          "beta": 1.0
+        }
+      },
+      "stage1": {
+        "default": {
+          "alpha": 19.0,
+          "beta": 1.0
+        }
+      },
+      "retry": {
+        "default": {
+          "alpha": 1.5,
+          "beta": 3.5
+        },
+        "no_code": {
+          "alpha": 3.0,
+          "beta": 2.0
+        },
+        "bad_format": {
+          "alpha": 2.5,
+          "beta": 2.5
+        },
+        "script_error": {
+          "alpha": 1.75,
+          "beta": 3.25
+        },
+        "tests_fail": {
+          "alpha": 1.0,
+          "beta": 4.0
+        }
+      },
+      "stage2": {
+        "default": {
+          "alpha": 3.0,
+          "beta": 7.0
+        }
+      }
+    },
+    "p_feasible": {
+      "default": {
+        "alpha": 1.0,
+        "beta": 1.0
+      }
+    }
+  },
+  "branches": {
+    "default": {
+      "default": {
+        "alpha": 1.0,
+        "beta": 1.0
+      }
+    },
+    "stage1": {
+      "default": {
+        "alpha": 300.0,
+        "beta": 11.0,
+        "n": 291
+      },
+      "search": {
+        "alpha": 90.0,
+        "beta": 3.0,
+        "n": 73
+      },
+      "math": {
+        "alpha": 94.0,
+        "beta": 1.0,
+        "n": 75
+      },
+      "data_analysis": {
+        "alpha": 87.0,
+        "beta": 1.0,
+        "n": 68
+      },
+      "coding": {
+        "alpha": 86.0,
+        "beta": 9.0,
+        "n": 75
+      }
+    },
+    "retry": {
+      "default": {
+        "alpha": 3.5,
+        "beta": 3.5,
+        "n": 2
+      },
+      "no_code": {
+        "alpha": 3.0,
+        "beta": 2.0
+      },
+      "bad_format": {
+        "alpha": 2.5,
+        "beta": 2.5
+      },
+      "script_error": {
+        "alpha": 1.75,
+        "beta": 3.25
+      },
+      "tests_fail": {
+        "alpha": 1.0,
+        "beta": 4.0
+      }
+    },
+    "stage2": {
+      "default": {
+        "alpha": 42.0,
+        "beta": 8.0,
+        "n": 40
+      },
+      "tests_fail": {
+        "alpha": 11.0,
+        "beta": 7.0,
+        "n": 8
+      }
+    }
+  },
+  "p_feasible": {
+    "default": {
+      "alpha": 1.0,
+      "beta": 1.0
+    },
+    "missing_file": {
+      "alpha": 1.0,
+      "beta": 11.0,
+      "n": 10
+    },
+    "unknown_value": {
+      "alpha": 1.0,
+      "beta": 7.0,
+      "n": 6
+    },
+    "bad_months": {
+      "alpha": 1.0,
+      "beta": 7.0,
+      "n": 6
+    },
+    "unknown_unit": {
+      "alpha": 1.0,
+      "beta": 6.0,
+      "n": 5
+    }
+  },
+  "source": [
+    "run-20261107-115711.jsonl",
+    "run-20261107-120828.jsonl",
+    "run-20261107-115812.jsonl",
+    "run-20261107-120934.jsonl",
+    "run-20261107-124025.jsonl",
+    "run-20261107-160653.jsonl",
+    "run-20261107-164542.jsonl",
+    "run-20261107-165235.jsonl",
+    "gen4"
+  ]
+}

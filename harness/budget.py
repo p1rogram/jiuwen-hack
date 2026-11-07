@@ -44,9 +44,13 @@ class BudgetLedger:
                 self._held[task_id] = max(0.0, self._held[task_id] - cost)
 
     def reserve(self, task_id: str, amount: float) -> bool:
-        """Держит amount под задачу, если он помещается в остаток за вычетом чужих резервов."""
+        """Держит amount под задачу, если он помещается в остаток за вычетом чужих резервов.
+
+        Повторный резерв той же задачи (ветка после провала) заменяет её прежний, а не добавляется к нему.
+        """
         with self._lock:
-            if self.total - self._spent - sum(self._held.values()) < amount:
+            others = sum(v for k, v in self._held.items() if k != task_id)
+            if self.total - self._spent - others < amount:
                 return False
             self._held[task_id] = amount
             return True

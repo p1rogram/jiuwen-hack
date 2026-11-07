@@ -4,39 +4,84 @@
     "prior_weight": 5.0,
     "types": {
       "coding": {
-        "chars_per_token": 3.512,
-        "out_mean": 416.3,
-        "out_p90": 728.0,
-        "p_retry": 0.0152,
-        "n": 32
+        "chars_per_token": 3.435,
+        "out_mean": 549.9,
+        "out_p90": 965.0,
+        "p_retry": 0.0064,
+        "n": 77
       },
       "data_analysis": {
-        "chars_per_token": 3.313,
-        "out_mean": 90.2,
-        "out_p90": 99.0,
-        "p_retry": 0.0152,
-        "n": 32
+        "chars_per_token": 3.304,
+        "out_mean": 94.0,
+        "out_p90": 109.0,
+        "p_retry": 0.0068,
+        "n": 72
       },
       "math": {
-        "chars_per_token": 3.988,
-        "out_mean": 140.4,
-        "out_p90": 184.0,
-        "p_retry": 0.0161,
-        "n": 30
+        "chars_per_token": 3.951,
+        "out_mean": 180.6,
+        "out_p90": 243.0,
+        "p_retry": 0.0064,
+        "n": 77
       },
       "search": {
-        "chars_per_token": 2.724,
-        "out_mean": 208.7,
-        "out_p90": 301.0,
-        "p_retry": 0.0556,
-        "n": 26
+        "chars_per_token": 2.703,
+        "out_mean": 186.6,
+        "out_p90": 275.0,
+        "p_retry": 0.0338,
+        "n": 73
       },
       "default": {
-        "chars_per_token": 3.007,
-        "out_mean": 215.4,
-        "out_p90": 444.0,
-        "p_retry": 0.0124,
-        "n": 120
+        "chars_per_token": 2.929,
+        "out_mean": 256.3,
+        "out_p90": 581.0,
+        "p_retry": 0.0083,
+        "n": 299
+      }
+    }
+  },
+  "stage2": {
+    "prior": false,
+    "types": {
+      "default": {
+        "steps_mean": 1.95,
+        "steps_high": 3.0,
+        "step_out_mean": 196.1,
+        "step_out_p90": 505.0,
+        "obs_chars": 225.1,
+        "n": 40
+      },
+      "coding": {
+        "steps_mean": 1.31,
+        "steps_high": 2.0,
+        "step_out_mean": 405.8,
+        "step_out_p90": 1024.0,
+        "obs_chars": 380.0,
+        "n": 16
+      },
+      "data_analysis": {
+        "steps_mean": 2.0,
+        "steps_high": 2.0,
+        "step_out_mean": 52.4,
+        "step_out_p90": 113.0,
+        "obs_chars": 117.8,
+        "n": 8
+      },
+      "math": {
+        "steps_mean": 2.38,
+        "steps_high": 3.0,
+        "step_out_mean": 106.0,
+        "step_out_p90": 303.0,
+        "obs_chars": 125.5,
+        "n": 8
+      },
+      "search": {
+        "steps_mean": 2.75,
+        "steps_high": 6.0,
+        "step_out_mean": 178.3,
+        "step_out_p90": 534.0,
+        "obs_chars": 309.3,
+        "n": 8
       }
     }
   },
@@ -44,6 +89,10 @@
     "run-20261107-115711.jsonl",
     "run-20261107-120828.jsonl",
     "run-20261107-115812.jsonl",
-    "run-20261107-120934.jsonl"
+    "run-20261107-120934.jsonl",
+    "run-20261107-124025.jsonl",
+    "run-20261107-160653.jsonl",
+    "run-20261107-164542.jsonl",
+    "run-20261107-165235.jsonl"
   ]
 }

@@ -4,13 +4,14 @@
   "base_url_env_names": ["LLM_BASE_URL", "NEURALDEEP_BASE_URL", "OPENAI_BASE_URL", "BASE_URL", "API_BASE", "API_URL"],
   "models": {
     "all": ["qwen3.8-27b", "qwen3.8-27b-noreason", "qwen3.6-35b-a3b", "qwen3.6-35b-a3b-noreason"],
-    "stage1": "qwen3.6-35b-a3b-noreason"
+    "stage1": "qwen3.6-35b-a3b-noreason",
+    "stage2": "qwen3.6-35b-a3b-noreason"
   },
   "accounting": {
     "input_weight": 0.1,
     "reasoning_in_completion": true
   },
-  "budget_default": 1000000,
+  "budget_default": 100000,
   "parallel_sessions": 5,
   "llm": {
     "temperature": 0.0,
@@ -25,6 +26,13 @@
     "script_timeout_sec": 60,
     "error_tail_chars": 1500
   },
+  "stage2": {
+    "max_steps": 6,
+    "max_step_tokens": 1024,
+    "script_timeout_sec": 60,
+    "obs_tail_chars": 1200
+  },
+  "success_model_file": "success_model.json",
   "snapshot": {
     "max_file_chars": 6000,
     "max_total_chars": 24000,

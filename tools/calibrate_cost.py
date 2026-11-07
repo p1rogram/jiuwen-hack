@@ -14,8 +14,10 @@ from collections import defaultdict
 from pathlib import Path
 
 from harness.cost_model import CostModel
-from harness.settings import load_prompt, load_settings_raw
+from harness.settings import load_config, load_prompt, load_settings_raw
 from tools.cost_data import OLD_COSTS, Obs, load_pairs
+
+STAGE2_MIN_TYPE = 5  # задач с этапом 2 на тип для своего раздела: меньше — p90 шагов не по чему считать
 
 
 def _p90(values: list[float]) -> float:
@@ -45,7 +47,29 @@ def fit(obs: list[Obs], prior_weight: float) -> dict:
     types = {t: _type_stats(os_) for t, os_ in sorted(by_type.items())}
     types["default"] = _type_stats(llm)
     return {"stage1": {"retry_prompt_chars": retry_chars, "prior_weight": prior_weight,
-                       "types": types}}
+                       "types": types}, "stage2": _stage2(obs)}
+
+
+def _stage2(obs: list[Obs]) -> dict:
+    """Шаги и выход шага этапа 2 по журналам; нет данных — прежний раздел конфига (с пометкой prior)."""
+    runs = [o for o in obs if o.s2_outs]
+    if len(runs) < 3:
+        return load_config(load_settings_raw()["cost_model_file"]).get("stage2", {})
+    types = {"default": _stage2_stats(runs)}
+    for t in sorted({o.task_type for o in runs}):
+        mine = [o for o in runs if o.task_type == t]
+        if len(mine) >= STAGE2_MIN_TYPE:
+            types[t] = _stage2_stats(mine)
+    return {"prior": False, "types": types}
+
+
+def _stage2_stats(runs: list[Obs]) -> dict:
+    steps = [len(o.s2_outs) for o in runs]
+    outs = [x for o in runs for x in o.s2_outs]
+    grow = [x for o in runs for x in o.s2_obs_chars]
+    return {"steps_mean": round(sum(steps) / len(steps), 2), "steps_high": float(_p90(steps)),
+            "step_out_mean": round(sum(outs) / len(outs), 1), "step_out_p90": float(_p90(outs)),
+            "obs_chars": round(sum(grow) / len(grow), 1) if grow else 1200.0, "n": len(runs)}
 
 
 def _half(task_id: str) -> int:

@@ -32,8 +32,14 @@ class Obs:
     prompt_chars: int = 0
     in1: int = 0
     out1: int = 0
-    attempts: int = 0
+    attempts: int = 0  # вызовы этапа 1
     sec: float = 0.0
+    soft: tuple[str, ...] = ()  # коды soft-сигналов детектора
+    solved_by: str = ""
+    s2_cost: float = 0.0
+    s2_failure: str = ""  # вид провала, после которого выбран этап 2
+    s2_outs: tuple[int, ...] = ()  # выход каждого шага этапа 2
+    s2_obs_chars: tuple[int, ...] = ()  # прирост контекста между шагами сверх ответа модели
 
     @property
     def solved(self) -> bool:
@@ -88,14 +94,23 @@ def load_pair(tasks_dir: Path, log: Path) -> list[Obs]:
         if task is None:
             continue
         cs = sorted(calls.get(tid, []), key=lambda c: c["stage"])
-        first = cs[0] if cs else {}
+        s1 = [c for c in cs if not c["stage"].startswith("stage2.")]
+        s2 = sorted((c for c in cs if c["stage"].startswith("stage2.")), key=lambda c: int(c["stage"].split(".")[1]))
+        first = s1[0] if s1 else {}
+        chose2 = [d for d in rec.get("decisions", []) if d.get("choice") == "stage2"]
         out.append(Obs(
             run=log.stem, task_id=tid, task_type=task.task_type, reward=task.reward, status=rec["status"],
             feasible=bool(labels.get(tid, {"feasible": True})["feasible"]),
             cost=sum(c["cost"] for c in cs),
             prompt_chars=int(first.get("prompt_chars") or rec.get("prompt_chars") or rebuilt.get(tid, 0)),
             in1=int(first.get("input_tokens", 0)), out1=int(first.get("output_tokens", 0)),
-            attempts=len(cs), sec=float(rec.get("sec", 0.0)),
+            attempts=len(s1), sec=float(rec.get("sec", 0.0)),
+            soft=tuple(x["code"] for x in rec.get("signals", []) if x.get("severity") == "soft"),
+            solved_by=rec.get("solved_by", ""), s2_cost=sum(c["cost"] for c in s2),
+            s2_failure=chose2[-1]["failure"] if chose2 else "",
+            s2_outs=tuple(int(c["output_tokens"]) for c in s2),
+            s2_obs_chars=tuple(b["prompt_chars"] - a["prompt_chars"] - a["content_chars"] for a, b in zip(s2, s2[1:])
+                               if "prompt_chars" in a and "prompt_chars" in b),
         ))
     return out
 

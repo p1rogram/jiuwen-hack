@@ -1,0 +1,6 @@
+exit code {code}{timeout}
+stdout (tail):
+{stdout}
+stderr (tail):
+{stderr}
+If this output is the final answer, reply `FINAL: <answer>`.

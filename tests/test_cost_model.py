@@ -116,6 +116,18 @@ class Calibration(unittest.TestCase):
         self.assertAlmostEqual(t["p_retry"], (1 + 0.5) / (2 + 1), places=4)
         self.assertIn("default", cfg["stage1"]["types"])
 
+    def test_stage2_by_type_when_enough_tasks(self):
+        # run17/run19: цена шага этапа 2 у search в ~10 раз выше data_analysis — общий default её смазывает
+        def s2(tid, ttype, outs):
+            return Obs("run", tid, ttype, 1.0, "verified", True, 100.0, 1000, 250, 100, 1, 1.0,
+                       s2_outs=outs, s2_obs_chars=(300,) * len(outs))
+        runs = [s2(f"s{i}", "search", (500, 500, 500)) for i in range(5)] + \
+               [s2(f"d{i}", "data_analysis", (100,)) for i in range(3)]
+        st = fit(runs, 5.0)["stage2"]["types"]
+        self.assertEqual((st["search"]["steps_mean"], st["search"]["step_out_mean"]), (3.0, 500.0))
+        self.assertNotIn("data_analysis", st)  # 3 задачи — мало для своего p90
+        self.assertEqual(st["default"]["n"], 8)
+
 
 class Simulation(unittest.TestCase):
     def test_reservation_prevents_overrun_that_constants_cause(self):

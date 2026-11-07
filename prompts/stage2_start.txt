@@ -1,0 +1,7 @@
+Your script did not solve the task. Problem:
+{problem}
+
+Now investigate step by step. Each reply must be exactly one of:
+1. A single ```python code block. It runs in the task folder; you will see its exit code and the tail of its output. Use it to inspect files, debug, or write fixed files. It is saved as a .py file, not run by a shell: write Python, not `python3 -c ...` or `echo ... > file`, even if the task mentions a bash tool.
+2. One line `FINAL: <answer>` with the bare final answer value. For tasks that fix code, reply `FINAL: DONE` once the tests pass.
+Keep replies short. You have at most {max_steps} replies.

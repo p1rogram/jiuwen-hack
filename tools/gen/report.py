@@ -15,7 +15,7 @@ from tools.eval_answers import judge_labeled, load_labels
 
 def read_log(path: Path) -> tuple[dict[str, dict], dict[str, dict]]:
     tasks: dict[str, dict] = {}
-    calls: dict[str, dict] = defaultdict(lambda: {"cost": 0.0, "in": 0, "out": 0, "n": 0})
+    calls: dict[str, dict] = defaultdict(lambda: {"cost": 0.0, "in": 0, "out": 0, "n": 0, "s2_cost": 0.0, "s2_n": 0})
     for line in path.read_text(encoding="utf-8").splitlines():
         rec = json.loads(line)
         if rec.get("kind") == "task":
@@ -26,6 +26,9 @@ def read_log(path: Path) -> tuple[dict[str, dict], dict[str, dict]]:
             c["in"] += rec["input_tokens"]
             c["out"] += rec["output_tokens"]
             c["n"] += 1
+            if str(rec.get("stage", "")).startswith("stage2."):
+                c["s2_cost"] += rec["cost"]
+                c["s2_n"] += 1
     return tasks, calls
 
 
@@ -41,7 +44,9 @@ def build(root: Path, log: Path) -> dict:
         rec = tasks.get(tid, {})
         rows.append({"task_id": tid, "type": data["task_type"], "reward": data["reward"], "feasible": lab["feasible"],
                      "variant": lab["variant"], "kind": lab["kind"], "status": rec.get("status", "missing"),
-                     "ok": ok, "answer": answer, **calls.get(tid, {"cost": 0.0, "in": 0, "out": 0, "n": 0})})
+                     "ok": ok, "answer": answer, "solved_by": rec.get("solved_by", ""),
+                     "stage2_stop": rec.get("stage2_stop", ""),
+                     **calls.get(tid, {"cost": 0.0, "in": 0, "out": 0, "n": 0, "s2_cost": 0.0, "s2_n": 0})})
     skipped = lambda r: r["status"] == "skipped_infeasible"  # noqa: E731
     tp = sum(1 for r in rows if not r["feasible"] and skipped(r))
     fp = sum(1 for r in rows if r["feasible"] and skipped(r))
@@ -59,6 +64,11 @@ def build(root: Path, log: Path) -> dict:
                      "precision": round(tp / (tp + fp), 3) if tp + fp else None,
                      "recall": round(tp / (tp + fn), 3) if tp + fn else None,
                      "reward_lost": sum(r["reward"] for r in rows if r["feasible"] and skipped(r))},
+        "stage2": {"tasks": sum(r["s2_n"] > 0 for r in rows), "calls": sum(r["s2_n"] for r in rows),
+                   "cost": round(sum(r["s2_cost"] for r in rows), 1),
+                   "rescued": sum(r["ok"] and r["solved_by"] == "stage2" for r in rows),
+                   "rescued_reward": sum(r["reward"] for r in rows if r["ok"] and r["solved_by"] == "stage2"),
+                   "skipped_low_value": sum(r["status"] == "skipped_low_value" for r in rows)},
         "rows": rows,
     }
 
@@ -90,11 +100,17 @@ def main() -> None:
           f"calls {rep['llm_calls']}; spent on infeasible {rep['cost_on_infeasible']}")
     print(f"detector in run: tp={d['tp']} fp={d['fp']} fn={d['fn']} precision={d['precision']} "
           f"recall={d['recall']} reward_lost={d['reward_lost']}")
+    s2 = rep["stage2"]
+    print(f"stage2: {s2['tasks']} tasks, {s2['calls']} calls, cost {s2['cost']}; rescued {s2['rescued']} "
+          f"(reward {s2['rescued_reward']}); skipped_low_value {s2['skipped_low_value']}")
     print("by type:", *group(rep["rows"], "type"), sep="\n")
     print("by variant:", *group(rep["rows"], "variant"), sep="\n")
     for r in rep["rows"]:
         if r["feasible"] and not r["ok"]:
-            print(f"FAILED {r['task_id']} {r['variant']} status={r['status']} answer={r['answer']!r} cost={r['cost']:.0f}")
+            print(f"FAILED {r['task_id']} {r['variant']} status={r['status']} answer={r['answer']!r} cost={r['cost']:.0f}"
+                  + (f" stage2={r['s2_cost']:.0f} stop={r['stage2_stop']}" if r["s2_n"] else ""))
+        if r["ok"] and r["solved_by"] == "stage2":
+            print(f"RESCUED {r['task_id']} {r['variant']} stage2={r['s2_cost']:.0f} in {r['s2_n']} calls")
         if not r["feasible"] and r["status"] != "skipped_infeasible":
             print(f"ATTEMPTED-INFEASIBLE {r['task_id']} {r['kind']} status={r['status']} cost={r['cost']:.0f}")
     if a.json:
