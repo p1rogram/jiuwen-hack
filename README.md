@@ -19,6 +19,44 @@ docker run --rm --read-only --tmpfs /tmp:rw,size=2g --cap-drop ALL --cpus 8 --me
 Локально: `python tools/docker_run.py <tasks-dir> <out-dir>`. Ключ берётся из `.env` и передаётся в контейнер
 по имени переменной.
 
+## DGX Spark (arm64)
+
+Тот же `Dockerfile` и тот же `requirements.lock` собираются на amd64 и arm64: база `python:3.12-slim@sha256:…` —
+мультиархитектурный индекс, все пакеты lock есть колёсами под обе архитектуры (`python tools/check_wheels.py`).
+На Spark харнесс ходит в LAIKA (`http://127.0.0.1:22500/v1`) с профилем `spark` (`config/profiles/spark.json`):
+адрес, имена моделей на сервере (`nvidia/Qwen3.6-35B-A3B-NVFP4`), `chat_template_kwargs.enable_thinking` для
+«noreason», `max_inflight` 4. Общий `config/harness.json` не меняется. Ключ: если LAIKA его требует —
+`export LLM_API_KEY=…`; без ключа профиль подставляет заглушку.
+
+1. Запустить модель (одна за раз; этап 1 и этап 2 — одна модель):
+   ```bash
+   laika start vllm nvidia/Qwen3.6-35B-A3B-NVFP4 --context 131072 --reasoning off --mtp on --kv-cache-dtype fp8 --batch-size 4 --max-output-tokens 8192
+   ```
+2. Проверить сервер — имена моделей, `usage`, входят ли рассуждения в `completion_tokens`:
+   ```bash
+   python3 tools/probe_server.py --out probe.json
+   ```
+   Имя модели не совпало с `model_map` в профиле — поправить профиль. `usage: MISSING` — прогон пойдёт, но расход
+   будет оценкой (`usage_missing` в журнале).
+3. Образ. Есть доступ к Docker и сеть наружу — собрать прямо на Spark (это и есть проверка «как у жюри на arm64»):
+   ```bash
+   docker build -t jiuwen-harness .
+   python3 tools/docker_run.py "$TASKS" out --profile spark --image jiuwen-harness
+   ```
+   Нет — собрать на ПК под arm64 и запустить через Apptainer (без root):
+   ```bash
+   docker buildx build --platform linux/arm64 -t jiuwen-harness:arm64 --load .
+   docker save -o jiuwen-harness-arm64.tar jiuwen-harness:arm64
+   ```
+   Перенести на Spark папку репозитория и `jiuwen-harness-arm64.tar`, там:
+   ```bash
+   apptainer build jiuwen-harness.sif docker-archive://jiuwen-harness-arm64.tar
+   python3 tools/docker_run.py "$TASKS" out --profile spark --runtime apptainer --image jiuwen-harness.sif
+   ```
+4. Калибровочные прогоны — с `--budget 1000000`. Перед стартом `docker_run` проверяет, что сервер отвечает и
+   держит модель этапов; иначе выходит, не потратив токенов. В журнале `run_start` помечен `profile: spark`:
+   веса на Spark NVFP4, поэтому эти журналы держим отдельно от калибровки по прокси жюри.
+
 ## Как работает
 
 1. **Этап 0, без LLM.** Читаем `task.json` и делаем короткий срез папки задачи: список файлов, вывод упавших тестов,
@@ -70,9 +108,13 @@ docker run --rm --read-only --tmpfs /tmp:rw,size=2g --cap-drop ALL --cpus 8 --me
   в остаток бюджета за вычетом резерва задач, которые уже решаются (перерасход обрывает весь запуск);
   не поместившиеся получают второй проход, когда резервы сменятся фактической ценой.
 - Модель расхода `harness/cost_model.py`: вход — длина готового промпта / символов на токен (по типу:
-  search ~2.8, math ~3.9), выход — среднее и p90 по типу, плюс ожидаемая цена повтора; во время прогона
-  среднее выхода и масштаб входа сдвигаются к факту. Параметры `config/cost_model.json` пишет
-  `python -m tools.calibrate_cost <tasks-dir>=<log> ... --out config/cost_model.json`.
+  search ~3.3, math ~4.0), выход — среднее и p95 по типу (не ниже среднего), плюс ожидаемая цена повтора; во время
+  прогона среднее выхода и масштаб входа сдвигаются к факту. Параметры `config/cost_model.json` пишет
+  `python -m tools.calibrate_cost <tasks-dir>=<log> ... --out config/cost_model.json` (`--keep-stage2` — раздел этапа 2
+  остаётся прежним, когда сменились только промпты этапа 1).
+- Перекалибровка 2026-11-09 после коротких промптов (gen3, примеры, 127 задач gen4 — 187 задач): прежние параметры
+  завышали оценку в среднем на 35 % (search почти втрое); новые — WAPE 0.37 на отложенной половине против 0.60,
+  факт выше высокой оценки (p95) у 10.2 % задач (при p90 было бы 15.5 %; в симуляции баллы те же).
 - Проверка на журналах (gen3 × 2 + примеры, 120 задач, калибровка на одной половине — проверка на другой):
   ошибка оценки WAPE 0.23 против 1.01 у прежних констант по типу; факт выше высокой оценки у 8 % задач.
   Проигрыш журналов при урезанном бюджете (`python -m tools.simulate_budget`): при 25/50/75/90 % от полного

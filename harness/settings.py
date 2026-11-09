@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,11 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config" / "harness.json"
 PROMPTS_DIR = ROOT / "prompts"
+PROFILES_DIR = CONFIG_PATH.parent / "profiles"
+PROFILE_ENV = "HARNESS_PROFILE"
+PROFILE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+# серверы vLLM без ключа принимают любое значение, а клиент OpenAI пустое не пропускает
+NO_KEY_PLACEHOLDER = "EMPTY"
 
 
 @dataclass(frozen=True)
@@ -20,6 +26,7 @@ class Settings:
     out_path: Path | None
     log_dir: Path
     budget: float
+    profile: str | None = None
 
     def section(self, name: str) -> dict[str, Any]:
         return self.raw[name]
@@ -43,16 +50,53 @@ def _find_key(names: list[str], dotenv: dict[str, str]) -> str:
     return ""
 
 
-def load_settings_raw() -> dict[str, Any]:
-    """Только config/harness.json, без ключа API — для офлайн-инструментов."""
-    return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+def merge_profile(base: dict[str, Any], overlay: dict[str, Any], path: str = "") -> dict[str, Any]:
+    """Профиль поверх базы. Ключ, которого нет в базе, — ошибка (опечатка не должна молча пропасть).
+    Пустой словарь в базе (`model_map`) — свободная таблица: профиль задаёт её целиком."""
+    out = dict(base)
+    for key, value in overlay.items():
+        if key not in base:
+            raise SystemExit(f"profile key {path}{key!r} is not in config/harness.json")
+        if isinstance(base[key], dict) and base[key]:
+            if not isinstance(value, dict):
+                raise SystemExit(f"profile key {path}{key!r} must be an object")
+            out[key] = merge_profile(base[key], value, f"{path}{key}.")
+        else:
+            out[key] = value
+    return out
 
 
-def load_settings(budget: float | None = None, out: str | None = None) -> Settings:
-    raw = load_settings_raw()
+def resolve_profile(profile: str | None) -> str | None:
+    name = profile if profile is not None else os.environ.get(PROFILE_ENV)
+    if not name:
+        return None
+    if not PROFILE_NAME_RE.match(name):
+        raise SystemExit(f"bad profile name {name!r}: lowercase letters, digits, '-', '_'")
+    if not (PROFILES_DIR / f"{name}.json").is_file():
+        known = sorted(f.stem for f in PROFILES_DIR.glob("*.json"))
+        raise SystemExit(f"profile {name!r} not found in config/profiles {known}")
+    return name
+
+
+def load_settings_raw(profile: str | None = None) -> dict[str, Any]:
+    """config/harness.json (+ профиль стенда, если задан), без ключа API — для офлайн-инструментов."""
+    raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    if profile:
+        overlay = json.loads((PROFILES_DIR / f"{profile}.json").read_text(encoding="utf-8"))
+        overlay.pop("_comment", None)
+        raw = merge_profile(raw, overlay)
+    return raw
+
+
+def load_settings(budget: float | None = None, out: str | None = None, profile: str | None = None) -> Settings:
+    """profile: имя из config/profiles; None — из env HARNESS_PROFILE, пусто — без профиля."""
+    name = resolve_profile(profile)
+    raw = load_settings_raw(name)
     dotenv = _dotenv_values()
     base_url = _find_key(raw["base_url_env_names"], dotenv) or raw["llm_base_url_default"]
     api_key = _find_key(raw["api_key_env_names"], dotenv)
+    if not api_key and raw["api_key_optional"]:
+        api_key = NO_KEY_PLACEHOLDER
     if not api_key:
         names = sorted(dotenv)  # только имена, без значений
         state = f".env has vars: {names}" if (ROOT / ".env").exists() else ".env not found"
@@ -63,7 +107,7 @@ def load_settings(budget: float | None = None, out: str | None = None) -> Settin
     final_budget = budget if budget is not None else float(env_budget or raw["budget_default"])
     return Settings(raw=raw, base_url=base_url.rstrip("/"), api_key=api_key,
                     out_path=Path(out_value) if out_value else None,
-                    log_dir=log_dir, budget=final_budget)
+                    log_dir=log_dir, budget=final_budget, profile=name)
 
 
 def load_config(name: str) -> dict[str, Any]:

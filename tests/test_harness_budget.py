@@ -30,6 +30,9 @@ class FakeWriter:
     def record(self, task, answer):
         pass
 
+    def discard(self, task):
+        pass
+
 
 class FakePrompt:
     async def build(self, task):

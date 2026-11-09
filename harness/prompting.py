@@ -25,17 +25,27 @@ class Prepared:
 
 
 class Stage1Prompt:
-    def __init__(self, snapshot: WorkspaceSnapshot):
+    def __init__(self, snapshot: WorkspaceSnapshot, unsolvable_marker: str | None = None,
+                 tail_prompts: dict[str, str] | None = None):
         self._snapshot = snapshot
+        # правило формы ответа — в конце сообщения задачи: из системного промпта модель его не выполняет (замер 2026-11-09)
+        self._tails = {t: load_prompt(name).strip() for t, name in (tail_prompts or {}).items()}
         self._system = load_prompt("system.txt")
+        if unsolvable_marker:
+            rule = load_prompt("system_unsolvable.txt").format(marker=unsolvable_marker)
+            self._system = self._system.rstrip("\n") + "\n" + rule
         self._user_tpl = load_prompt("stage1_user.txt")
         self._retry_tpl = load_prompt("stage1_retry.txt")
 
     async def build(self, task: Task) -> Prepared:
         snap = await self._snapshot.build(task)
+        user = self._user_tpl.format(instruction=task.instruction, snapshot=snap)
+        tail = self._tails.get(task.task_type)
+        if tail:
+            user = user.rstrip() + "\n\n" + tail
         return Prepared(task, [
             {"role": "system", "content": self._system},
-            {"role": "user", "content": self._user_tpl.format(instruction=task.instruction, snapshot=snap)},
+            {"role": "user", "content": user},
         ])
 
     def retry(self, problem: str) -> dict[str, str]:

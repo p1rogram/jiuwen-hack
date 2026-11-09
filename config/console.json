@@ -23,6 +23,7 @@
   "status_labels": {
     "verified": "решена",
     "unverified": "не проверена",
+    "unsolvable": "отказ модели",
     "skipped_infeasible": "невыполнима",
     "skipped_low_value": "невыгодна",
     "skipped_budget": "не влезла в бюджет",

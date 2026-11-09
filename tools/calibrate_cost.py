@@ -1,6 +1,6 @@
 """Калибровка модели расхода (config/cost_model.json) по журналам прогонов и офлайн-оценка её точности.
 
-Запуск: python -m tools.calibrate_cost <tasks-dir>=<log> [...] [--out config/cost_model.json] [--eval]
+Запуск: python -m tools.calibrate_cost <tasks-dir>=<log> [...] [--out config/cost_model.json] [--eval] [--keep-stage2]
 --eval: задачи делятся пополам по task_id (оба прогона одной задачи — в одной половине), калибровка на одной
 половине, проверка на другой и наоборот; сравнение со старыми константами по типу.
 """
@@ -20,9 +20,17 @@ from tools.cost_data import OLD_COSTS, Obs, load_pairs
 STAGE2_MIN_TYPE = 5  # задач с этапом 2 на тип для своего раздела: меньше — p90 шагов не по чему считать
 
 
-def _p90(values: list[float]) -> float:
+# высокая оценка выхода этапа 1 — p95 (решение 2026-11-09: при p90 факт выше high у 15.5 % задач, баллы те же)
+STAGE1_HIGH_Q = 0.95
+
+
+def _quantile(values: list[float], q: float) -> float:
     s = sorted(values)
-    return s[max(0, math.ceil(0.9 * len(s)) - 1)]
+    return s[max(0, math.ceil(q * len(s)) - 1)]
+
+
+def _p90(values: list[float]) -> float:
+    return _quantile(values, 0.9)
 
 
 def _type_stats(obs: list[Obs]) -> dict:
@@ -30,12 +38,15 @@ def _type_stats(obs: list[Obs]) -> dict:
     retries = sum(o.attempts > 1 for o in obs)
     # отношение сумм, а не среднее отношений: длинные промпты весят больше, они и дороже
     cpt = sum(o.prompt_chars for o in obs) / sum(o.in1 for o in obs)
-    return {"chars_per_token": round(cpt, 3), "out_mean": round(sum(outs) / len(outs), 1), "out_p90": float(_p90(outs)),
+    mean = round(sum(outs) / len(outs), 1)
+    # при коротких ответах с редкими длинными квантиль бывает ниже среднего — high не должен быть меньше mean
+    return {"chars_per_token": round(cpt, 3), "out_mean": mean,
+            "out_high": max(float(_quantile(outs, STAGE1_HIGH_Q)), mean),
             # +0.5 / +1: на сотне задач повторов 0–1, нулевая вероятность врала бы на новом наборе
             "p_retry": round((retries + 0.5) / (len(obs) + 1), 4), "n": len(obs)}
 
 
-def fit(obs: list[Obs], prior_weight: float) -> dict:
+def fit(obs: list[Obs], prior_weight: float, keep_stage2: bool = False) -> dict:
     llm = [o for o in obs if o.llm and o.prompt_chars > 0]
     if len(llm) < 2:
         raise SystemExit("not enough LLM calls with prompt_chars to calibrate")
@@ -46,15 +57,20 @@ def fit(obs: list[Obs], prior_weight: float) -> dict:
         by_type[o.task_type].append(o)
     types = {t: _type_stats(os_) for t, os_ in sorted(by_type.items())}
     types["default"] = _type_stats(llm)
+    stage2 = _shipped_stage2() if keep_stage2 else _stage2(obs)
     return {"stage1": {"retry_prompt_chars": retry_chars, "prior_weight": prior_weight,
-                       "types": types}, "stage2": _stage2(obs)}
+                       "types": types}, "stage2": stage2}
+
+
+def _shipped_stage2() -> dict:
+    return load_config(load_settings_raw()["cost_model_file"]).get("stage2", {})
 
 
 def _stage2(obs: list[Obs]) -> dict:
     """Шаги и выход шага этапа 2 по журналам; нет данных — прежний раздел конфига (с пометкой prior)."""
     runs = [o for o in obs if o.s2_outs]
     if len(runs) < 3:
-        return load_config(load_settings_raw()["cost_model_file"]).get("stage2", {})
+        return _shipped_stage2()
     types = {"default": _stage2_stats(runs)}
     for t in sorted({o.task_type for o in runs}):
         mine = [o for o in runs if o.task_type == t]
@@ -76,13 +92,13 @@ def _half(task_id: str) -> int:
     return zlib.crc32(task_id.encode()) % 2
 
 
-def evaluate(obs: list[Obs], prior_weight: float) -> dict:
+def evaluate(obs: list[Obs], prior_weight: float, keep_stage2: bool = False) -> dict:
     w = load_settings_raw()["accounting"]["input_weight"]
     rows = []
     for fold in (0, 1):
         train = [o for o in obs if _half(o.task_id) != fold]
         test = [o for o in obs if _half(o.task_id) == fold and o.llm]
-        model = CostModel(fit(train, prior_weight), w)
+        model = CostModel(fit(train, prior_weight, keep_stage2), w)
         for o in test:
             e = model.estimate(o.task_type, o.prompt_chars)
             rows.append((o, e.mean, e.high, OLD_COSTS.get(o.task_type, OLD_COSTS["default"])))
@@ -108,15 +124,17 @@ def main() -> None:
     p.add_argument("--out", type=Path, default=None)
     p.add_argument("--prior-weight", type=float, default=5.0)
     p.add_argument("--eval", action="store_true")
+    p.add_argument("--keep-stage2", action="store_true",
+                   help="раздел stage2 — из текущего config/cost_model.json (сменились только промпты этапа 1)")
     a = p.parse_args()
     obs = load_pairs(a.pairs)
-    cfg = fit(obs, a.prior_weight)
+    cfg = fit(obs, a.prior_weight, a.keep_stage2)
     cfg["source"] = [Path(x.rpartition("=")[2]).name for x in a.pairs]
     print(json.dumps(cfg, indent=1, ensure_ascii=False))
     if a.out:
         a.out.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     if a.eval:
-        r = evaluate(obs, a.prior_weight)
+        r = evaluate(obs, a.prior_weight, a.keep_stage2)
         print(f"eval on held-out halves: tasks {r['tasks']}, WAPE new {r['wape_new']:.3f} vs old {r['wape_old']:.3f}, "
               f"actual > high: {r['over_high']:.1%}")
         for t, s in r["by_type"].items():

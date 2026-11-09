@@ -70,7 +70,8 @@ def _read_log(log: Path) -> tuple[dict[str, dict], dict[str, list[dict]]]:
 
 
 async def _rebuild_chars(tasks: list[Task]) -> dict[str, int]:
-    prompt = Stage1Prompt(WorkspaceSnapshot(load_settings_raw()["snapshot"]))
+    raw = load_settings_raw()
+    prompt = Stage1Prompt(WorkspaceSnapshot(raw["snapshot"]), None, raw["stage1"]["tail_prompts"])
     sem = asyncio.Semaphore(5)
 
     async def one(t: Task) -> tuple[str, int]:

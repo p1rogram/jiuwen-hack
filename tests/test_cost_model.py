@@ -17,8 +17,8 @@ from tools.cost_data import Obs  # noqa: E402
 from tools.simulate_budget import simulate  # noqa: E402
 
 
-def stats(out_mean, out_p90=None, cpt=4.0, p_retry=0.0):
-    return {"chars_per_token": cpt, "out_mean": out_mean, "out_p90": out_p90 or out_mean, "p_retry": p_retry}
+def stats(out_mean, out_high=None, cpt=4.0, p_retry=0.0):
+    return {"chars_per_token": cpt, "out_mean": out_mean, "out_high": out_high or out_mean, "p_retry": p_retry}
 
 
 def model(types, prior=5.0, retry_chars=0):
@@ -127,6 +127,26 @@ class Calibration(unittest.TestCase):
         self.assertEqual((st["search"]["steps_mean"], st["search"]["step_out_mean"]), (3.0, 500.0))
         self.assertNotIn("data_analysis", st)  # 3 задачи — мало для своего p90
         self.assertEqual(st["default"]["n"], 8)
+
+    def test_high_output_never_below_mean(self):
+        # run31 search: выход 13–14 у почти всех и редкие 41–48 — квантиль (13) ниже среднего, high < mean
+        outs = [13] * 9 + [100]
+        cfg = fit([obs(f"s{i}", "search", 1000, 300, x) for i, x in enumerate(outs)], 5.0)
+        t = cfg["stage1"]["types"]["search"]
+        self.assertGreaterEqual(t["out_high"], t["out_mean"])
+
+    def test_high_output_is_p95(self):
+        # решение владельца 2026-11-09: высокая оценка выхода этапа 1 — p95 (при p90 факт выше high у 15.5 % задач)
+        cfg = fit([obs(f"m{i}", "math", 1000, 250, x) for i, x in enumerate(range(1, 21))], 5.0)
+        self.assertEqual(cfg["stage1"]["types"]["math"]["out_high"], 19.0)  # p90 был бы 18
+
+    def test_keep_stage2_takes_section_from_shipped_config(self):
+        # промпты этапа 1 сменились (хвосты 2026-11-09), этап 2 — нет: его раздел не пересчитывается по нескольким задачам
+        runs = [Obs("run", f"s{i}", "search", 1.0, "verified", True, 100.0, 1000, 250, 100, 1, 1.0,
+                    s2_outs=(10, 10), s2_obs_chars=(50, 50)) for i in range(5)]
+        shipped = load_config("cost_model.json")["stage2"]
+        self.assertEqual(fit(runs, 5.0, keep_stage2=True)["stage2"], shipped)
+        self.assertNotEqual(fit(runs, 5.0)["stage2"], shipped)
 
 
 class Simulation(unittest.TestCase):

@@ -2,14 +2,17 @@
   "llm_base_url_default": "https://api.neuraldeep.ru/v1",
   "api_key_env_names": ["LLM_API_KEY", "NEURALDEEP_API_KEY", "OPENAI_API_KEY", "API_KEY"],
   "base_url_env_names": ["LLM_BASE_URL", "NEURALDEEP_BASE_URL", "OPENAI_BASE_URL", "BASE_URL", "API_BASE", "API_URL"],
+  "api_key_optional": false,
   "models": {
     "all": ["qwen3.8-27b", "qwen3.8-27b-noreason", "qwen3.6-35b-a3b", "qwen3.6-35b-a3b-noreason"],
     "stage1": "qwen3.6-35b-a3b-noreason",
     "stage2": "qwen3.6-35b-a3b-noreason"
   },
+  "model_map": {},
   "accounting": {
     "input_weight": 0.1,
-    "reasoning_in_completion": true
+    "reasoning_in_completion": true,
+    "missing_usage_chars_per_token": 2.5
   },
   "budget_default": 100000,
   "parallel_sessions": 5,
@@ -24,7 +27,10 @@
   "stage1": {
     "attempts": 2,
     "script_timeout_sec": 60,
-    "error_tail_chars": 1500
+    "error_tail_chars": 1500,
+    "unsolvable_enabled": false,
+    "unsolvable_marker": "UNSOLVABLE",
+    "tail_prompts": {"search": "stage1_tail_search.txt", "math": "stage1_tail.txt", "data_analysis": "stage1_tail.txt"}
   },
   "stage2": {
     "max_steps": 6,
@@ -37,7 +43,11 @@
     "max_file_chars": 6000,
     "max_total_chars": 24000,
     "csv_sample_rows": 5,
-    "test_output_chars": 2500
+    "test_output_chars": 2500,
+    "kb_min_files": 6,
+    "kb_follow_depth": 3,
+    "kb_max_files": 12,
+    "kb_omitted_note": "(+{n} more files not linked to the names in the task; not shown)"
   },
   "cost_model_file": "cost_model.json",
   "feasibility": {

@@ -28,7 +28,7 @@ from harness.solver import Stage1Solver
 from harness.stage2 import Stage2Solver
 from harness.success_model import SuccessModel
 from harness.tasks import Task, load_tasks
-from harness.verifier import Verifier
+from harness.verifier import UNSOLVABLE, Verifier
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,6 +37,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--budget", type=float, default=None, help="бюджет в выходных токенах")
     p.add_argument("--out", default=None, help="файл решений (по умолчанию env OUT)")
     p.add_argument("--model", default=None, help="модель этапа 1 вместо config")
+    p.add_argument("--profile", default=None,
+                   help="профиль стенда из config/profiles (по умолчанию env HARNESS_PROFILE), например spark")
     p.add_argument("--only", nargs="*", default=None, help="решать только эти task_id")
     p.add_argument("--force-stage2", action="store_true",
                    help="замер этапа 2: этап 1 не вызывается, каждая задача сразу идёт в этап 2")
@@ -44,6 +46,8 @@ def parse_args() -> argparse.Namespace:
 
 
 class Harness:
+    profile: str | None = None  # профиль стенда для run_start; тесты собирают Harness без __init__
+
     def __init__(self, settings: Settings, model: str | None, force_stage2: bool = False):
         acc = settings.section("accounting")
         self.ledger = BudgetLedger(settings.budget)
@@ -51,10 +55,12 @@ class Harness:
         self.log = JsonlLog(settings.log_dir / f"run-{run_id}.jsonl")
         gateway = LlmGateway(settings.base_url, settings.api_key, settings.section("llm"),
                              TokenPricing(acc["input_weight"], acc["reasoning_in_completion"]),
-                             self.ledger, self.log)
+                             self.ledger, self.log, settings.raw["model_map"],
+                             acc["missing_usage_chars_per_token"])
         stage1_cfg = settings.section("stage1")
-        self.prompt = Stage1Prompt(WorkspaceSnapshot(settings.section("snapshot")))
-        verifier = Verifier(stage1_cfg["error_tail_chars"])
+        marker = stage1_cfg["unsolvable_marker"] if stage1_cfg["unsolvable_enabled"] else None
+        self.prompt = Stage1Prompt(WorkspaceSnapshot(settings.section("snapshot")), marker, stage1_cfg["tail_prompts"])
+        verifier = Verifier(stage1_cfg["error_tail_chars"], marker)
         models = settings.section("models")
         stage1 = Stage1Solver(gateway, self.prompt, verifier, model or models["stage1"], stage1_cfg)
         cost_model = CostModel(load_config(settings.raw["cost_model_file"]), acc["input_weight"])
@@ -67,12 +73,14 @@ class Harness:
         self.pending: dict[str, Prepared] = {}  # ещё не начатые задачи — по ним считается λ
         self.writer = ResultsWriter(settings.out_path)
         self.parallel = int(settings.raw["parallel_sessions"])
+        self.profile = settings.profile
         feas = settings.section("feasibility")
         self.detector = FeasibilityDetector(load_config(feas["config_file"])) if feas["enabled"] else None
         self.skip_severities = feas["skip_severities"]
 
     async def run(self, tasks: list[Task]) -> list[dict]:
-        self.log.write({"kind": "run_start", "tasks": len(tasks), "budget": self.ledger.total})
+        self.log.write({"kind": "run_start", "tasks": len(tasks), "budget": self.ledger.total,
+                        **({"profile": self.profile} if self.profile else {})})
         sem = asyncio.Semaphore(self.parallel)
 
         async def limited(coro):
@@ -145,9 +153,11 @@ class Harness:
         try:
             await self.solver.solve(prepared, outcome)
         except BudgetExhausted:
+            self.writer.discard(task)
             return self._record({**head, "status": "budget_exhausted", "cost": round(outcome.cost, 1),
                                  "calls": outcome.calls})
         except Exception as exc:  # одна упавшая задача не должна валить прогон
+            self.writer.discard(task)
             return self._record({**head, "status": "error", "error": f"{type(exc).__name__}: {exc}"[:500],
                                  "cost": round(outcome.cost, 1), "calls": outcome.calls})
         finally:
@@ -155,7 +165,10 @@ class Harness:
             self.planner.finish(prepared, outcome.first_stage1_call())
         if outcome.answer:
             self.writer.record(task, outcome.answer)
-        return self._record({**head, "status": "verified" if outcome.verified else "unverified",
+        else:
+            self.writer.discard(task)
+        status = "verified" if outcome.verified else "unsolvable" if outcome.failure == UNSOLVABLE else "unverified"
+        return self._record({**head, "status": status,
                              "answer": outcome.answer, "solved_by": outcome.solved_by, "attempts": outcome.attempts,
                              "cost": round(outcome.cost, 1),
                              "problem": outcome.problem[:300], "failure": outcome.failure,
@@ -167,7 +180,7 @@ class Harness:
 
 def main() -> None:
     args = parse_args()
-    settings = load_settings(budget=args.budget, out=args.out)
+    settings = load_settings(budget=args.budget, out=args.out, profile=args.profile)
     tasks = load_tasks(args.tasks_dir)
     if args.only:
         tasks = [t for t in tasks if t.task_id in set(args.only)]

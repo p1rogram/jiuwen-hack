@@ -1,0 +1,1 @@
+- If the task cannot be answered exactly because required data is missing (no such file, entity, field or value) or the input is contradictory or undefined, the script must print only {marker} instead of guessing. Never print {marker} when the answer can be computed.

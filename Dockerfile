@@ -1,4 +1,6 @@
 # Харнесс openJiuwen Challenge. Базовый образ закреплён по digest (python 3.12.16, Debian 13).
+# Digest — мультиархитектурный индекс (linux/amd64, linux/arm64 и др.): один Dockerfile и один requirements.lock
+# собираются на обеих архитектурах, все пакеты ставятся колёсами (tools/check_wheels.py).
 FROM python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

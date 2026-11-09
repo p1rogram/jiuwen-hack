@@ -15,7 +15,7 @@ class Estimate:
 class _TypeStats:
     chars_per_token: float
     out_mean: float
-    out_p90: float
+    out_high: float  # высокий квантиль выхода (p95, tools/calibrate_cost.py)
     p_retry: float
     obs_sum: float = 0.0
     obs_n: int = 0
@@ -44,7 +44,7 @@ class CostModel:
         self._retry_chars = float(c["retry_prompt_chars"])
         self._prior = float(c["prior_weight"])
         # символов на токен зависит от содержимого: search (имена, kb) ~2.8, math (английский текст) ~3.9
-        self._types = {t: _TypeStats(float(s["chars_per_token"]), float(s["out_mean"]), float(s["out_p90"]),
+        self._types = {t: _TypeStats(float(s["chars_per_token"]), float(s["out_mean"]), float(s["out_high"]),
                                      float(s["p_retry"]))
                        for t, s in c["types"].items()}
         s2 = cfg.get("stage2", {}).get("types", {})
@@ -75,14 +75,14 @@ class CostModel:
             second = self._w * (inp + out + retry_in) + out
             return first + s.p_retry * second
 
-        return Estimate(mean=cost(s.out_mean * scale), high=cost(s.out_p90 * scale))
+        return Estimate(mean=cost(s.out_mean * scale), high=cost(s.out_high * scale))
 
     def retry_cost(self, task_type: str, prompt_chars: int) -> Estimate:
         """Повтор этапа 1: тот же контекст + ответ модели + текст ошибки, и выход ещё раз."""
         s = self._stats(task_type)
         scale = self._out_scale(s)
         base = self.input_tokens(task_type, prompt_chars) + self._retry_chars / s.chars_per_token
-        return Estimate(*(self._w * (base + out) + out for out in (s.out_mean * scale, s.out_p90 * scale)))
+        return Estimate(*(self._w * (base + out) + out for out in (s.out_mean * scale, s.out_high * scale)))
 
     def stage2_cost(self, task_type: str, prompt_chars: int) -> Estimate:
         s2 = self._stage2.get(task_type) or self._stage2.get("default")
@@ -102,7 +102,7 @@ class CostModel:
     def stage2_step(self, task_type: str, context_chars: int) -> float:
         """Высокая оценка одного шага этапа 2 по текущему контексту — для стопа по бюджету задачи."""
         s2 = self._stage2.get(task_type) or self._stage2.get("default")
-        out = s2.step_out_p90 if s2 else self._stats(task_type).out_p90
+        out = s2.step_out_p90 if s2 else self._stats(task_type).out_high
         return self._w * context_chars / self._stats(task_type).chars_per_token + out
 
     def observe(self, task_type: str, prompt_chars: int, input_tokens: int, output_tokens: int) -> None:

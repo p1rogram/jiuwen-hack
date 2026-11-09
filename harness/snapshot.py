@@ -6,9 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from harness.executor import run_python
+from harness.kb_slice import kb_slice
 from harness.tasks import Task
 
 SKIP_NAMES = {"answer.txt", "__pycache__", ".DS_Store"}
+TEXT_SUFFIXES = {".py", ".md", ".txt", ".csv", ".json", ".tsv", ".yaml", ".yml"}
 
 
 class WorkspaceSnapshot:
@@ -17,16 +19,27 @@ class WorkspaceSnapshot:
         self._max_total = cfg["max_total_chars"]
         self._csv_rows = cfg["csv_sample_rows"]
         self._test_chars = cfg["test_output_chars"]
+        self._kb_min = cfg["kb_min_files"]
+        self._kb_depth = cfg["kb_follow_depth"]
+        self._kb_max = cfg["kb_max_files"]
+        self._kb_note = cfg["kb_omitted_note"]
 
     async def build(self, task: Task) -> str:
         ws = task.workspace
         files = self._list_files(ws)
         if not files:
             return "(no files)"
-        parts = ["FILES:\n" + "\n".join(f"{p.relative_to(ws).as_posix()} ({p.stat().st_size} B)" for p in files)]
+        text_files = [p for p in files if p.suffix in TEXT_SUFFIXES]
+        narrow = (kb_slice(task.instruction, text_files, self._kb_depth, self._kb_max)
+                  if len(text_files) > self._kb_min else None)
+        listed = files if narrow is None else narrow
+        listing = "\n".join(f"{p.relative_to(ws).as_posix()} ({p.stat().st_size} B)" for p in listed)
+        if narrow is not None:
+            listing += "\n" + self._kb_note.format(n=len(files) - len(narrow))
+        parts = ["FILES:\n" + listing]
         parts += await self._test_output(ws, files)
         budget = self._max_total
-        for path in self._relevant_files(task, ws, files):
+        for path in narrow if narrow is not None else self._relevant_files(task, text_files):
             text = self._render_file(path)
             block = f"\n--- {path.relative_to(ws).as_posix()} ---\n{text}"
             if len(block) > budget:
@@ -52,10 +65,9 @@ class WorkspaceSnapshot:
             out.append(f"\n--- output of `python3 {test.name}` (exit {res.returncode}) ---\n{tail}")
         return out
 
-    def _relevant_files(self, task: Task, ws: Path, files: list[Path]) -> list[Path]:
-        text_files = [p for p in files if p.suffix in {".py", ".md", ".txt", ".csv", ".json", ".tsv", ".yaml", ".yml"}]
+    def _relevant_files(self, task: Task, text_files: list[Path]) -> list[Path]:
         terms = self._terms(task.instruction)
-        if len(text_files) <= 6 or not terms:
+        if len(text_files) <= self._kb_min or not terms:
             return text_files
         # много файлов (база знаний): сначала те, где встречаются имена из вопроса
         scored = []

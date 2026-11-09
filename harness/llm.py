@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 import time
 from dataclasses import dataclass
@@ -33,7 +34,8 @@ class BudgetExhausted(RuntimeError):
 
 class LlmGateway:
     def __init__(self, base_url: str, api_key: str, llm_cfg: dict[str, Any],
-                 pricing: TokenPricing, ledger: BudgetLedger, log: JsonlLog):
+                 pricing: TokenPricing, ledger: BudgetLedger, log: JsonlLog,
+                 model_map: dict[str, dict[str, Any]] | None = None, missing_usage_chars_per_token: float = 2.5):
         self._client_cfg = ModelClientConfig(
             client_provider="OpenAI", api_key=api_key, api_base=base_url,
             timeout=float(llm_cfg["timeout_sec"]), verify_ssl=True,
@@ -43,6 +45,9 @@ class LlmGateway:
         self._ledger = ledger
         self._log = log
         self._models: dict[str, Model] = {}
+        # логическое имя из config → имя на сервере стенда и поля тела запроса (профиль, например spark)
+        self._model_map = model_map or {}
+        self._missing_cpt = missing_usage_chars_per_token
         # прокси NeuralDeep: не более 3 параллельных запросов на ключ, иначе 429
         self._inflight = asyncio.Semaphore(int(llm_cfg["max_inflight"]))
         self._retries = int(llm_cfg["rate_limit_retries"])
@@ -64,7 +69,8 @@ class LlmGateway:
         for attempt in range(self._retries + 1):
             try:
                 async with self._inflight:
-                    return await self._model(model).invoke(messages, max_tokens=max_tokens)
+                    return await self._model(model).invoke(messages, max_tokens=max_tokens,
+                                                           **self._extra_body(model))
             except Exception as exc:
                 wait = self._rate_limit_wait(str(exc))
                 if wait is None or attempt == self._retries:
@@ -73,12 +79,33 @@ class LlmGateway:
                 await asyncio.sleep(wait)
         raise RuntimeError("unreachable")
 
+    def served_name(self, name: str) -> str:
+        return self._model_map.get(name, {}).get("model", name)
+
+    def _extra_body(self, name: str) -> dict[str, Any]:
+        extra = self._model_map.get(name, {}).get("extra_body")
+        return {"extra_body": dict(extra)} if extra else {}
+
     def _model(self, name: str) -> Model:
         if name not in self._models:
-            req = ModelRequestConfig(model=name, temperature=self._cfg["temperature"],
+            req = ModelRequestConfig(model=self.served_name(name), temperature=self._cfg["temperature"],
                                      max_tokens=self._cfg["max_output_tokens"])
             self._models[name] = Model(self._client_cfg, req)
         return self._models[name]
+
+    def _usage(self, meta: Any, messages: list[dict[str, str]], text: str, reasoning: str) -> tuple[Usage, bool]:
+        """Токены из ответа сервера. Нет usage или в нём 0 там, где текст был (промпт, ответ), — эта часть
+        оценивается по символам с запасом: списать ноль за оплаченное нельзя, иначе бюджет ничего не ограничивает."""
+        cpt = float(self._missing_cpt)
+        missing = meta is None
+        inp = int(getattr(meta, "input_tokens", 0) or 0)
+        out = int(getattr(meta, "output_tokens", 0) or 0)
+        reasoning_tokens = int(getattr(meta, "reasoning_tokens", 0) or 0)
+        if inp == 0 and prompt_chars(messages):
+            inp, missing = math.ceil(prompt_chars(messages) / cpt), True
+        if out == 0 and (text or reasoning):
+            out, reasoning_tokens, missing = math.ceil((len(text) + len(reasoning)) / cpt), 0, True
+        return Usage(input_tokens=inp, output_tokens=out, reasoning_tokens=reasoning_tokens), missing
 
     async def ask(self, model: str, messages: list[dict[str, str]], *, task_id: str, stage: str,
                   max_tokens: int | None = None) -> LlmReply:
@@ -87,21 +114,18 @@ class LlmGateway:
         started = time.monotonic()
         msg = await self._invoke(model, messages, max_tokens or self._cfg["max_output_tokens"], task_id)
         latency = time.monotonic() - started
-        meta = msg.usage_metadata
-        usage = Usage(
-            input_tokens=int(getattr(meta, "input_tokens", 0) or 0),
-            output_tokens=int(getattr(meta, "output_tokens", 0) or 0),
-            reasoning_tokens=int(getattr(meta, "reasoning_tokens", 0) or 0),
-        )
-        cost = self._pricing.cost(usage)
-        self._ledger.charge(cost, task_id)
         text = msg.content if isinstance(msg.content, str) else str(msg.content or "")
         reasoning = msg.reasoning_content or ""
+        usage, missing = self._usage(msg.usage_metadata, messages, text, reasoning)
+        cost = self._pricing.cost(usage)
+        self._ledger.charge(cost, task_id)
         self._log.write({
             "kind": "llm_call", "task_id": task_id, "stage": stage, "model": model,
+            **({"served_model": self.served_name(model)} if model in self._model_map else {}),
             "prompt_chars": prompt_chars(messages), "input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
             "reasoning_tokens": usage.reasoning_tokens, "reasoning_chars": len(reasoning),
             "content_chars": len(text), "cost": round(cost, 1), "latency_sec": round(latency, 2),
             "budget_spent": round(self._ledger.spent, 1),
+            **({"usage_missing": True} if missing else {}),
         })
         return LlmReply(text=text, reasoning=reasoning, usage=usage, cost=cost, latency_sec=latency)

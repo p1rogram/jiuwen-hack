@@ -20,6 +20,8 @@ LABEL_RE = re.compile(r"^[A-Za-z][A-Za-z _.'/()-]{0,60}:\s*(\S.*)$")
 # виды провала — ключи SuccessModel: от вида зависит, какая ветка после провала вероятнее даст ответ
 NO_CODE, SCRIPT_ERROR, TESTS_FAIL, BAD_FORMAT = "no_code", "script_error", "tests_fail", "bad_format"
 FAILURE_KINDS = (NO_CODE, SCRIPT_ERROR, TESTS_FAIL, BAD_FORMAT)
+# отказ модели (маркер в последней строке stdout): не провал для веток — задача на нём заканчивается
+UNSOLVABLE = "unsolvable"
 
 
 @dataclass(frozen=True)
@@ -36,12 +38,16 @@ def last_line(text: str) -> str:
 
 
 class Verifier:
-    def __init__(self, error_tail_chars: int):
+    def __init__(self, error_tail_chars: int, unsolvable_marker: str | None = None):
         self._tail = error_tail_chars
+        self._marker = unsolvable_marker.strip().upper() if unsolvable_marker else None
 
     async def check(self, task: Task, run: RunResult) -> Verdict:
         if run.timed_out:
             return Verdict(False, "", "script timed out", SCRIPT_ERROR)
+        # до кода возврата: модель печатает маркер и иногда выходит с sys.exit(1)
+        if self._marker and last_line(run.stdout).strip("`'\"").upper() == self._marker:
+            return Verdict(False, "", "model reported the task unsolvable", UNSOLVABLE)
         if run.returncode != 0:
             return Verdict(False, "", f"script failed (exit {run.returncode}):\n{run.stderr[-self._tail:]}",
                            SCRIPT_ERROR)

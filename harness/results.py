@@ -16,12 +16,17 @@ class ResultsWriter:
         self._lock = threading.Lock()
 
     def record(self, task: Task, answer: str) -> None:
-        # В регламенте «папка задачи», в инструкции «текущая папка» — пишем в обе, пока не уточнили.
-        for folder in {task.task_dir, task.workspace}:
-            (folder / "answer.txt").write_text(answer + "\n", encoding="utf-8")
+        # только рядом с task.json: так ответили организаторы (обзор вопросов, 07.11); копия в workspace не нужна
+        (task.task_dir / "answer.txt").write_text(answer + "\n", encoding="utf-8")
         with self._lock:
             self._answers[task.task_id] = answer
             self._flush()
+
+    @staticmethod
+    def discard(task: Task) -> None:
+        """Задача без принятого ответа — без answer.txt («невыполнимая — не создавайте файл»). Нужно, потому что
+        скрипт модели работает в task.workspace, а у задач без workspace/ (math) это папка самой задачи."""
+        (task.task_dir / "answer.txt").unlink(missing_ok=True)
 
     def _flush(self) -> None:
         if self._out is None:
