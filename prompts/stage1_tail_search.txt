@@ -1,1 +1,2 @@
 Reply with the code only: no # comments, no blank lines, no prints except the final answer, do not write answer.txt. If the answer is already in CONTEXT above, reply with just: print("<answer>").
+A chain question ("the headquarters of the employer of X's mentor") is read from the person outward: X -> X's mentor -> the mentor's employer -> its headquarters. Follow every link in that order; the answer belongs to the last entity, not to X.
