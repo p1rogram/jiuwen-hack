@@ -55,6 +55,102 @@ FAILED (failures=2, errors=1)
 """
 
 
+TRICKY = """EEFFF
+hello stdout
+======================================================================
+ERROR: test_chain (__main__.T.test_chain)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/ws/test_mylib.py", line 5, in test_chain
+    1/0
+    ~^~
+ZeroDivisionError: division by zero
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/ws/test_mylib.py", line 7, in test_chain
+    raise ValueError("second")
+ValueError: second
+
+======================================================================
+ERROR: test_imp (__main__.T.test_imp)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/ws/test_mylib.py", line 15, in test_imp
+    import mylib
+  File "/ws/mylib.py", line 1
+    def f(:
+          ^
+SyntaxError: invalid syntax
+
+======================================================================
+FAIL: test_ml (__main__.T.test_ml)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/ws/test_mylib.py", line 13, in test_ml
+    self.assertEqual(m.text(), "a\\nX\\nc\\n")
+AssertionError: 'aaaaaaaaaaaaaaaaaaaa[40 chars]\\nb\\n' != 'aaaaaaaaaaaaaaaaaaaa[40 chars]\\nX\\n'
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+- b
++ X
+
+
+======================================================================
+FAIL: test_msg (__main__.T.test_msg)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/ws/test_mylib.py", line 18, in test_msg
+    self.assertTrue(m.ok(), "first\\nsecond detail")
+AssertionError: False is not true : first
+second detail
+
+======================================================================
+FAIL: test_sub (__main__.T.test_sub) (i=1)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/ws/test_mylib.py", line 11, in test_sub
+    self.assertEqual(m.parity(i), 0)
+AssertionError: 1 != 0
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.007s
+
+FAILED (failures=3, errors=2)
+"""
+
+
+class ReviewShapes(unittest.TestCase):
+    def setUp(self):
+        self.out = compact_unittest(TRICKY)
+
+    def test_chained_exception_keeps_final_error(self):
+        self.assertIn("ValueError: second", self.out)
+        self.assertIn("During handling of the above exception", self.out)
+
+    def test_syntax_error_keeps_file_line_and_source(self):
+        self.assertIn("mylib.py:1: def f(:", self.out)
+        self.assertIn("SyntaxError: invalid syntax", self.out)
+
+    def test_shortened_diff_keeps_details(self):
+        self.assertIn("- b", self.out)
+        self.assertIn("+ X", self.out)
+
+    def test_multiline_message_kept(self):
+        self.assertIn("second detail", self.out)
+
+    def test_subtest_params_kept(self):
+        self.assertIn("FAIL: test_sub (i=1)", self.out)
+
+    def test_printed_output_kept(self):
+        self.assertIn("hello stdout", self.out)
+
+    def test_script_error_line_not_unittest(self):
+        raw = ("ERROR: config missing, using defaults\nTraceback (most recent call last):\n"
+               '  File "/ws/run.py", line 3, in <module>\n    cfg["k"]\nKeyError: \'k\'\n')
+        self.assertEqual(compact_unittest(raw), raw)
+
+
 class Compact(unittest.TestCase):
     def test_keeps_essentials_drops_noise(self):
         out = compact_unittest(RAW)
