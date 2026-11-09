@@ -6,3 +6,7 @@ __pycache__/
 .venv/
 data/task-examples/__MACOSX/
 .DS_Store
+
+# рабочие заметки разработки, жюри не нужны
+specs/
+docs/DECISIONS.md
