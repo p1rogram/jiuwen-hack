@@ -8,6 +8,7 @@ from typing import Any
 from harness.executor import run_python
 from harness.kb_slice import kb_slice
 from harness.tasks import Task
+from harness.test_output import compact_unittest
 
 SKIP_NAMES = {"answer.txt", "__pycache__", ".DS_Store"}
 TEXT_SUFFIXES = {".py", ".md", ".txt", ".csv", ".json", ".tsv", ".yaml", ".yml"}
@@ -23,6 +24,7 @@ class WorkspaceSnapshot:
         self._kb_depth = cfg["kb_follow_depth"]
         self._kb_max = cfg["kb_max_files"]
         self._kb_note = cfg["kb_omitted_note"]
+        self._compact = bool(cfg.get("compact_test_output", False))
 
     async def build(self, task: Task) -> str:
         ws = task.workspace
@@ -61,7 +63,8 @@ class WorkspaceSnapshot:
         out = []
         for test in tests[:2]:
             res = await run_python([test.name], ws, 60)
-            tail = (res.stdout + res.stderr)[-self._test_chars:]
+            raw = res.stdout + res.stderr
+            tail = (compact_unittest(raw) if self._compact else raw)[-self._test_chars:]
             out.append(f"\n--- output of `python3 {test.name}` (exit {res.returncode}) ---\n{tail}")
         return out
 
