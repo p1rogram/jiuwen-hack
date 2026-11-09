@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import ast
 
+from harness.source_lines import reindent as _reindent, segment as _segment, split_lines, start_line as _start
+
 DEFS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
 IMPORTS = (ast.Import, ast.ImportFrom)
 
 
@@ -12,17 +15,18 @@ class PatchError(ValueError):
 
 
 def merge_source(original: str, patch: str) -> str:
-    """Функции/классы патча заменяют одноимённые (последнее определение), новые — в конец; класс — по членам;
+    """Функции/классы патча заменяют одноимённые (среди нескольких — с теми же декораторами, иначе последнее),
+    новые — в конец, но перед `if __name__`; класс — по членам, изменённый заголовок класса переносится;
     одиночный метод (self/cls или декоратор метода) — в единственный класс, где он есть; импорт — если его нет;
     присваивание имени заменяет такое же или встаёт после импортов. Остальные инструкции патча не переносятся."""
     orig_tree = parse_source(original, "the original file")
     patch_tree = parse_source(patch, "your code")
     nl = "\r\n" if "\r\n" in original else "\n"
-    lines = original.splitlines(keepends=True)
+    lines = split_lines(original)
     if lines and not lines[-1].endswith(("\n", "\r")):
         lines[-1] += nl
-    patch_lines = patch.splitlines()
-    named = {}
+    patch_lines = [line.rstrip("\r\n") for line in split_lines(patch)]
+    named: dict[str, list[ast.stmt]] = {}
     have_imports = set()
     body = orig_tree.body
     # новые импорты и присваивания — после последнего импорта, иначе после docstring модуля, иначе в начало
@@ -31,10 +35,11 @@ def merge_source(original: str, patch: str) -> str:
     for node in body:
         name = _name(node)
         if name:
-            named[name] = node  # последнее определение — действующее
+            named.setdefault(name, []).append(node)
         if isinstance(node, IMPORTS):
             imports_end = node.end_lineno
             have_imports.add(ast.dump(node))
+    main_start = _start(body[-1]) if body and _is_main_guard(body[-1]) else None
 
     edits = _Edits()
     head: list[str] = []
@@ -49,14 +54,19 @@ def merge_source(original: str, patch: str) -> str:
         name = _name(node)
         if not name:
             continue
-        old = named.get(name)
-        if isinstance(old, ast.ClassDef) and isinstance(node, ast.ClassDef):
+        old = _pick(named.get(name, []), node, "the file")
+        # метод с тем же именем, что у функции модуля, — правка метода, а не функции
+        owner = _method_owner(orig_tree, name) if _method_like(node) and (
+            old is None or isinstance(old, FUNCS) and not _method_like(old)) else None
+        if owner is not None:
+            target = _pick([n for n in owner.body if _name(n) == name and isinstance(n, DEFS)], node,
+                           f"class {owner.name}")
+            edits.replace[_start(target)] = (target.end_lineno,
+                                             _reindent(text, node.col_offset, target.col_offset, nl))
+        elif isinstance(old, ast.ClassDef) and isinstance(node, ast.ClassDef):
             _merge_members(old, node, patch_lines, nl, edits)
         elif old is not None:
             edits.replace[_start(old)] = (old.end_lineno, text)
-        elif _method_like(node) and (owner := _method_owner(orig_tree, name)) is not None:
-            old = [n for n in owner.body if _name(n) == name and isinstance(n, DEFS)][-1]
-            edits.replace[_start(old)] = (old.end_lineno, _reindent(text, node.col_offset, old.col_offset, nl))
         elif isinstance(node, DEFS):
             tail.append(text)
         else:
@@ -68,6 +78,10 @@ def merge_source(original: str, patch: str) -> str:
         if head and i > imports_end:
             out.extend(head)
             head = []
+        if tail and i == main_start:
+            # новые функции — до блока запуска: иначе вызов из него упадёт с NameError
+            out.extend(text + nl + nl for text in tail)
+            tail = []
         if i in edits.replace:
             end, text = edits.replace[i]
             out.append(text)
@@ -95,16 +109,17 @@ class _Edits:
 def _merge_members(old: ast.ClassDef, new: ast.ClassDef, patch_lines: list[str], nl: str, edits: _Edits) -> None:
     """Класс правки вклеивается по членам: модель часто присылает класс только с изменённым методом,
     замена класса целиком стёрла бы остальные методы."""
-    members = {}
+    _merge_header(old, new, patch_lines, nl, edits)
+    members: dict[str, list[ast.stmt]] = {}
     for node in old.body:
         if name := _name(node):
-            members[name] = node
+            members.setdefault(name, []).append(node)
     indent = old.body[0].col_offset
     for node in new.body:
         name = _name(node)
         if not name:
             continue
-        prev = members.get(name)
+        prev = _pick(members.get(name, []), node, f"class {old.name}")
         if isinstance(prev, ast.ClassDef) and isinstance(node, ast.ClassDef):
             _merge_members(prev, node, patch_lines, nl, edits)
             continue
@@ -115,10 +130,51 @@ def _merge_members(old: ast.ClassDef, new: ast.ClassDef, patch_lines: list[str],
             edits.after.setdefault(old.end_lineno, []).append(nl + _reindent(text, node.col_offset, indent, nl))
 
 
+def _merge_header(old: ast.ClassDef, new: ast.ClassDef, patch_lines: list[str], nl: str, edits: _Edits) -> None:
+    """Базы, keywords и декораторы класса правки заменяют прежние: вклейка по членам их бы молча потеряла.
+    Заголовок — строки от декораторов до первого члена (комментарии между ними заменяются вместе с ним)."""
+    if _header_key(old) == _header_key(new):
+        return
+    old_end, new_end = _start(old.body[0]) - 1, _start(new.body[0]) - 1
+    if old_end < old.lineno or new_end < new.lineno:
+        raise PatchError(f"class {old.name!r}: header changed in a one-line class; "
+                         f"send the class with its members on separate lines")
+    text = _reindent(nl.join(patch_lines[_start(new) - 1:new_end]) + nl, new.col_offset, old.col_offset, nl)
+    edits.replace[_start(old)] = (old_end, text)
+
+
+def _header_key(node: ast.ClassDef) -> tuple:
+    return tuple(ast.dump(n) for n in node.bases), tuple(ast.dump(n) for n in node.keywords), _decorators(node)
+
+
+def _decorators(node: ast.stmt) -> tuple[str, ...]:
+    return tuple(ast.dump(d) for d in getattr(node, "decorator_list", []))
+
+
+def _pick(candidates: list[ast.stmt], node: ast.stmt, where: str) -> ast.stmt | None:
+    """Из одноимённых определений (property и setter, overload, переопределение) — последнее с теми же
+    декораторами; одно определение — оно же. Без совпадения среди нескольких def — отказ:
+    иначе правка геттера затёрла бы сеттер."""
+    if len(candidates) <= 1:
+        return candidates[0] if candidates else None
+    same = [c for c in candidates if _decorators(c) == _decorators(node)]
+    if same:
+        return same[-1]
+    if not any(isinstance(c, DEFS) for c in candidates):
+        return candidates[-1]
+    raise PatchError(f"{_name(node)!r} is defined several times in {where} with different decorators; "
+                     f"keep the decorators of the definition you fix")
+
+
+def _is_main_guard(node: ast.stmt) -> bool:
+    test = node.test if isinstance(node, ast.If) else None
+    return isinstance(test, ast.Compare) and isinstance(test.left, ast.Name) and test.left.id == "__name__"
+
+
 def _method_like(node: ast.stmt) -> bool:
     """Одиночная функция похожа на метод: первый аргумент self/cls или декоратор метода
     (иначе новая функция с именем чужого метода заменила бы метод)."""
-    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    if not isinstance(node, FUNCS):
         return False
     args = node.args.posonlyargs + node.args.args
     if args and args[0].arg in ("self", "cls"):
@@ -142,20 +198,6 @@ def _method_owner(tree: ast.Module, name: str) -> ast.ClassDef | None:
     return owners[0] if owners else None
 
 
-def _reindent(text: str, old: int, new: int, nl: str) -> str:
-    if old == new:
-        return text
-    pad = " " * new
-    out = []
-    for line in text.split(nl):
-        if not line.strip():
-            out.append(line)
-            continue
-        cut = len(line) - len(line.lstrip(" \t"))
-        out.append(pad + line[min(cut, old):])
-    return nl.join(out)
-
-
 def method_names(tree: ast.Module) -> set[str]:
     """Имена методов всех классов модуля (для блока правки без заголовка)."""
     return {_name(m) for n in ast.walk(tree) if isinstance(n, ast.ClassDef) for m in n.body
@@ -165,8 +207,9 @@ def method_names(tree: ast.Module) -> set[str]:
 def parse_source(source: str, what: str) -> ast.Module:
     try:
         return ast.parse(source)
-    except SyntaxError as exc:
-        raise PatchError(f"syntax error in {what}, line {exc.lineno}: {exc.msg}") from None
+    except (SyntaxError, ValueError) as exc:  # ValueError — NUL-байт в исходнике
+        line = getattr(exc, "lineno", None)
+        raise PatchError(f"syntax error in {what}, line {line}: {getattr(exc, 'msg', exc)}") from None
 
 
 def _name(node: ast.stmt) -> str | None:
@@ -177,12 +220,3 @@ def _name(node: ast.stmt) -> str | None:
         if len(targets) == 1 and isinstance(targets[0], ast.Name):
             return targets[0].id
     return None
-
-
-def _start(node: ast.stmt) -> int:
-    decos = getattr(node, "decorator_list", [])
-    return min([node.lineno] + [d.lineno for d in decos])
-
-
-def _segment(lines: list[str], node: ast.stmt, nl: str) -> str:
-    return nl.join(lines[_start(node) - 1:node.end_lineno]) + nl
