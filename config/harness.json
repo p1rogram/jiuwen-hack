@@ -33,7 +33,9 @@
     "error_tail_chars": 1500,
     "unsolvable_enabled": false,
     "unsolvable_marker": "UNSOLVABLE",
-    "tail_prompts": {"search": "stage1_tail_search.txt", "math": "stage1_tail.txt", "data_analysis": "stage1_tail.txt"}
+    "tail_prompts": {"search": "stage1_tail_search.txt", "math": "stage1_tail.txt", "data_analysis": "stage1_tail.txt"},
+    "patch_types": ["coding"],
+    "patch_prompts": {"system": "system_patch.txt", "retry": "stage1_retry_patch.txt"}
   },
   "stage2": {
     "max_steps": 6,

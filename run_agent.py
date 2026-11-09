@@ -60,12 +60,14 @@ class Harness:
                              acc["missing_usage_chars_per_token"])
         stage1_cfg = settings.section("stage1")
         marker = stage1_cfg["unsolvable_marker"] if stage1_cfg["unsolvable_enabled"] else None
-        self.prompt = Stage1Prompt(WorkspaceSnapshot(settings.section("snapshot")), marker, stage1_cfg["tail_prompts"])
+        self.prompt = Stage1Prompt(WorkspaceSnapshot(settings.section("snapshot")), marker, stage1_cfg["tail_prompts"],
+                                   stage1_cfg["patch_types"], stage1_cfg["patch_prompts"])
         verifier = Verifier(stage1_cfg["error_tail_chars"], marker)
         models = settings.section("models")
         stage1 = Stage1Solver(gateway, self.prompt, verifier, model or models["stage1"], stage1_cfg)
         cost_model = CostModel(load_config(settings.raw["cost_model_file"]), acc["input_weight"])
-        stage2 = Stage2Solver(gateway, verifier, cost_model, model or models["stage2"], settings.section("stage2"))
+        stage2 = Stage2Solver(gateway, verifier, cost_model, model or models["stage2"], settings.section("stage2"),
+                              stage1_cfg["patch_types"])
         success = SuccessModel(load_config(settings.raw["success_model_file"]))
         self.policy = DecisionPolicy(success, cost_model, self.ledger)
         self.solver = TaskPipeline(stage1, stage2, self.policy, success, self.lam,
@@ -179,7 +181,7 @@ class Harness:
                              "cost": round(outcome.cost, 1),
                              "problem": outcome.problem[:300], "failure": outcome.failure,
                              "decisions": outcome.decisions, "stage2_steps": outcome.stage2_steps,
-                             "stage2_stop": outcome.stage2_stop, "calls": outcome.calls,
+                             "stage2_stop": outcome.stage2_stop, "applied": outcome.applied, "calls": outcome.calls,
                              "signals": [s.as_dict() for s in prepared.signals],
                              "sec": round(time.monotonic() - started, 1), **write_error(written)})
 

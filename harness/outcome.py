@@ -17,6 +17,7 @@ class Outcome:
     solved_by: str = ""  # stage1 | retry | stage2
     stage2_steps: int = 0
     stage2_stop: str = ""  # почему цикл этапа 2 остановился
+    applied: str = ""  # как применён последний ответ этапа 1: patch | script
     calls: list[dict[str, Any]] = field(default_factory=list)
     decisions: list[dict[str, Any]] = field(default_factory=list)
     # переписка этапа 1 вместе с последним ответом модели — старт контекста этапа 2; в журнал не пишется

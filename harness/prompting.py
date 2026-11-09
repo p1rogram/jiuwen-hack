@@ -26,16 +26,27 @@ class Prepared:
 
 class Stage1Prompt:
     def __init__(self, snapshot: WorkspaceSnapshot, unsolvable_marker: str | None = None,
-                 tail_prompts: dict[str, str] | None = None):
+                 tail_prompts: dict[str, str] | None = None, patch_types: list[str] | None = None,
+                 patch_prompts: dict[str, str] | None = None):
         self._snapshot = snapshot
         # правило формы ответа — в конце сообщения задачи: из системного промпта модель его не выполняет (замер 2026-11-09)
         self._tails = {t: load_prompt(name).strip() for t, name in (tail_prompts or {}).items()}
-        self._system = load_prompt("system.txt")
-        if unsolvable_marker:
-            rule = load_prompt("system_unsolvable.txt").format(marker=unsolvable_marker)
-            self._system = self._system.rstrip("\n") + "\n" + rule
-        self._user_tpl = load_prompt("stage1_user.txt")
+        rule = load_prompt("system_unsolvable.txt").format(marker=unsolvable_marker) if unsolvable_marker else ""
+        self._system = self._with_rule(load_prompt("system.txt"), rule)
         self._retry_tpl = load_prompt("stage1_retry.txt")
+        # типы с ответом-правкой (только изменённые функции, вклейку делает харнесс): свои система и повтор
+        self._patch_types = set(patch_types or [])
+        if self._patch_types:
+            self._patch_system = self._with_rule(load_prompt(patch_prompts["system"]), rule)
+            self._patch_retry_tpl = load_prompt(patch_prompts["retry"])
+        self._user_tpl = load_prompt("stage1_user.txt")
+
+    @staticmethod
+    def _with_rule(system: str, rule: str) -> str:
+        return system.rstrip("\n") + "\n" + rule if rule else system
+
+    def is_patch(self, task_type: str) -> bool:
+        return task_type in self._patch_types
 
     async def build(self, task: Task) -> Prepared:
         snap = await self._snapshot.build(task)
@@ -43,10 +54,12 @@ class Stage1Prompt:
         tail = self._tails.get(task.task_type)
         if tail:
             user = user.rstrip() + "\n\n" + tail
+        system = self._patch_system if self.is_patch(task.task_type) else self._system
         return Prepared(task, [
-            {"role": "system", "content": self._system},
+            {"role": "system", "content": system},
             {"role": "user", "content": user},
         ])
 
-    def retry(self, problem: str) -> dict[str, str]:
-        return {"role": "user", "content": self._retry_tpl.format(problem=problem)}
+    def retry(self, problem: str, task_type: str = "") -> dict[str, str]:
+        tpl = self._patch_retry_tpl if self.is_patch(task_type) else self._retry_tpl
+        return {"role": "user", "content": tpl.format(problem=problem)}

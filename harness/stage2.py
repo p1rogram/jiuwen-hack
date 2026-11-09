@@ -15,6 +15,7 @@ from harness.cost_model import CostModel
 from harness.executor import RunResult, run_script
 from harness.llm import LlmGateway
 from harness.outcome import Outcome
+from harness.patching import PatchApplier, parse_blocks
 from harness.prompting import Prepared, prompt_chars
 from harness.settings import load_prompt
 from harness.solver import extract_code
@@ -46,8 +47,12 @@ def final_answer(text: str) -> str | None:
 
 
 class Stage2Solver:
-    def __init__(self, gateway: LlmGateway, verifier: Verifier, cost: CostModel, model: str, cfg: dict[str, Any]):
+    def __init__(self, gateway: LlmGateway, verifier: Verifier, cost: CostModel, model: str, cfg: dict[str, Any],
+                 patch_types: list[str] | None = None):
         self._gw = gateway
+        # у типов с ответом-правкой модель и на этапе 2 пишет блоки `# file:` — их вклеиваем, а не запускаем
+        self._patch_types = set(patch_types or [])
+        self._patcher = PatchApplier()
         self._verifier = verifier
         self._cost = cost
         self._model = model
@@ -79,11 +84,15 @@ class Stage2Solver:
             outcome.stage2_steps = step
             messages.append({"role": "assistant", "content": reply.text})
             code, final = extract_code(reply.text), final_answer(reply.text)
+            blocks = parse_blocks(reply.text) if task.task_type in self._patch_types else None
+            if blocks:
+                code = "\n".join(f"# file: {b.path}\n{b.source}" for b in blocks)
             if code is not None:
                 if code.strip() in seen_code:
                     return await self._repeated(task, outcome, seen_code[code.strip()], verdict)
                 before = workspace_state(task.workspace) if task.check == "unittest" else ""
-                run = await run_script(code, task.workspace, self._timeout)
+                run = (self._patcher.apply(blocks, task.workspace) if blocks
+                       else await run_script(code, task.workspace, self._timeout))
                 seen_code[code.strip()] = run
                 error = run.stderr if not run.ok else ""
                 if task.check == "unittest":
