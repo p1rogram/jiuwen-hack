@@ -8,7 +8,7 @@
 |---|---|---|---|
 | `run_agent.py` (`Harness`) | разбор аргументов, порядок и параллельность задач, λ по ещё не начатым задачам, пропуск soft-задач по политике, события `run_start` / `task_start` и итог задачи в журнал; `main` подписывает консоль на журнал | решение задачи, развилки, учёт токенов, вывод в консоль | planner, decision, pipeline, results, calllog, console |
 | `harness/settings.py` | `config/harness.json` + профиль стенда (`config/profiles/<имя>.json`, `HARNESS_PROFILE` / `--profile`; ключ, которого нет в базе, — ошибка) + env (+ `.env` локально), загрузка промптов | логику решения | все читают `Settings` |
-| `harness/tasks.py` | загрузка `*/task.json` в `Task` | проверку содержимого | — |
+| `harness/tasks.py` | загрузка `*/task.json` в `Task`; битый файл — пропуск, нет `reward` — 1.0 | проверку содержимого | — |
 | `harness/planner.py` | порядок задач по `DecisionPolicy.priority`, допуск задачи по `high` с резервом в бюджете | выполнимость, решение | cost_model, budget |
 | `harness/success_model.py` | вероятности успеха веток (`stage1` по типу, `retry`/`stage2` по виду провала) и `p_feasible` по коду soft-сигнала: бета-априор + факт прогона | цены, выбор | `config/success_model.json` |
 | `harness/decision.py` (`DecisionPolicy`) | λ — цена токена (жадный рюкзак оставшихся), EMV веток после провала и резерв выбранной, `skip_soft`, приоритет `reward · p / E[цена]`; без LLM и ввода-вывода | вызовы модели | success_model, cost_model, budget |
@@ -23,9 +23,9 @@
 | `harness/solver.py` | этап 1 по готовым сообщениям: одна попытка (`first` / `retry` с ошибкой) — вызов модели → скрипт → запуск → проверка | решение о повторе, учёт бюджета, запись ответа | llm, prompting, executor, verifier |
 | `harness/verifier.py` | бесплатная проверка результата по `check` (тесты, число, строка), вид провала (`no_code`, `script_error`, `tests_fail`, `bad_format`) или отказ модели `unsolvable` (маркер — вся последняя строка stdout), ответ из свежего `answer.txt` | — | executor |
 | `harness/executor.py` | запуск Python в папке задачи с таймаутом, без ключа API в env | — | — |
-| `harness/llm.py` | вызов модели через openjiuwen `Model`, семафор `max_inflight`, повтор при 429, логическое имя → имя на сервере и поля тела (`model_map` профиля), списание бюджета; нет `usage` — оценка по символам с запасом (`usage_missing`) | выбор модели | budget, calllog |
+| `harness/llm.py` | вызов модели через openjiuwen `Model`, семафор `max_inflight`, повтор при 429 и при обрыве/5xx (`network_*`), логическое имя → имя на сервере и поля тела (`model_map` профиля), списание бюджета; нет `usage` — оценка по символам с запасом (`usage_missing`) | выбор модели | budget, calllog |
 | `harness/budget.py` | цена вызова, общий счётчик бюджета, резервы задач в работе | — | — |
-| `harness/results.py` | `answer.txt` рядом с `task.json` (у задачи без ответа — удалить), атомарная запись `OUT` | — | — |
+| `harness/results.py` | `answer.txt` рядом с `task.json` (у задачи без ответа — удалить), атомарная запись `OUT` (`{}` при старте); ошибку записи возвращает текстом, не бросает | — | — |
 | `harness/calllog.py` | JSONL-журнал вызовов, развилок и итогов задач; подписчики получают те же записи под замком журнала (порядок = порядок строк), упавший подписчик отключается | — | — |
 | `harness/console.py` (`ConsoleView`) | консоль прогона в stderr: счётчики по событиям, живая строка прогресса (терминал — `\r`, иначе — строка раз в `plain_every_sec`), строки развилок / задач / 429, сводка; безопасная запись (замена символов, выключение при сбое) | решение, бюджет — только читает `BudgetLedger` | calllog (подписчик), budget, console_format |
 | `harness/console_format.py` (`LineFormat`) | строки консоли из событий и чисел (разделители, подписи статусов) — без ввода-вывода | — | `config/console.json` |
@@ -55,8 +55,8 @@
 не начатым задачам (`retry` | `stage2` | `stop`, резерв `high` ветки) → `Stage1Solver.retry` или `Stage2Solver` →
 `TaskPlanner.finish` (снять резерв, `CostModel.observe` по первому вызову этапа 1) →
 `ResultsWriter` (`answer.txt`, `OUT`) + `JsonlLog` (`prompt_chars`, оценки, `lambda`, `p_success`, `decisions`,
-`solved_by`, `stage2_stop`). Каждая запись журнала (`run_start`, `task_start`, `decision`, `rate_limit`, `task`)
+`solved_by`, `stage2_stop`). Каждая запись журнала (`run_start`, `task_start`, `decision`, `rate_limit`, `net_retry`, `detector_error`, `task`)
 сразу уходит подписчику `ConsoleView` → stderr.
 
 ## Бюджеты
-См. `.claude/limits.conf`. Превышение = сигнал разделить модуль.
+Размер модулей держим небольшим: модуль растёт — выделяем подсистему, а не дописываем (как `harness/feasibility/`).

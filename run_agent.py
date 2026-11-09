@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 import time
 from pathlib import Path
 
@@ -72,6 +73,8 @@ class Harness:
         self.planner = TaskPlanner(cost_model, self.ledger, self.policy.priority)
         self.pending: dict[str, Prepared] = {}  # ещё не начатые задачи — по ним считается λ
         self.writer = ResultsWriter(settings.out_path)
+        if self.writer.init_error:
+            print(f"не удалось записать {self.writer.init_error}", file=sys.stderr)
         self.parallel = int(settings.raw["parallel_sessions"])
         self.profile = settings.profile
         feas = settings.section("feasibility")
@@ -117,8 +120,15 @@ class Harness:
         return rec
 
     async def _prepare(self, task: Task) -> Prepared | dict:
+        signals: list[Signal] = []
+        if self.detector:
+            # сбой детектора — не повод бросать задачу: решаем её без сигналов
+            try:
+                signals = await asyncio.to_thread(self.detector.check, task)
+            except Exception as exc:
+                self.log.write({"kind": "detector_error", "task_id": task.task_id,
+                                "error": f"{type(exc).__name__}: {exc}"[:500]})
         try:
-            signals: list[Signal] = await asyncio.to_thread(self.detector.check, task) if self.detector else []
             if blocking(signals, self.skip_severities):
                 return self._record({"task_id": task.task_id, "type": task.task_type, "reward": task.reward,
                                      "status": "skipped_infeasible", "signals": [s.as_dict() for s in signals]})
@@ -153,20 +163,16 @@ class Harness:
         try:
             await self.solver.solve(prepared, outcome)
         except BudgetExhausted:
-            self.writer.discard(task)
             return self._record({**head, "status": "budget_exhausted", "cost": round(outcome.cost, 1),
-                                 "calls": outcome.calls})
+                                 "calls": outcome.calls, **write_error(self.writer.discard(task))})
         except Exception as exc:  # одна упавшая задача не должна валить прогон
-            self.writer.discard(task)
             return self._record({**head, "status": "error", "error": f"{type(exc).__name__}: {exc}"[:500],
-                                 "cost": round(outcome.cost, 1), "calls": outcome.calls})
+                                 "cost": round(outcome.cost, 1), "calls": outcome.calls,
+                                 **write_error(self.writer.discard(task))})
         finally:
             # поправка модели расхода этапа 1 — только по его первому вызову (в --force-stage2 его нет)
             self.planner.finish(prepared, outcome.first_stage1_call())
-        if outcome.answer:
-            self.writer.record(task, outcome.answer)
-        else:
-            self.writer.discard(task)
+        written = self.writer.record(task, outcome.answer) if outcome.answer else self.writer.discard(task)
         status = "verified" if outcome.verified else "unsolvable" if outcome.failure == UNSOLVABLE else "unverified"
         return self._record({**head, "status": status,
                              "answer": outcome.answer, "solved_by": outcome.solved_by, "attempts": outcome.attempts,
@@ -175,7 +181,11 @@ class Harness:
                              "decisions": outcome.decisions, "stage2_steps": outcome.stage2_steps,
                              "stage2_stop": outcome.stage2_stop, "calls": outcome.calls,
                              "signals": [s.as_dict() for s in prepared.signals],
-                             "sec": round(time.monotonic() - started, 1)})
+                             "sec": round(time.monotonic() - started, 1), **write_error(written)})
+
+
+def write_error(error: str) -> dict:
+    return {"write_error": error[:500]} if error else {}
 
 
 def main() -> None:

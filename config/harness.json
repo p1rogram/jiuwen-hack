@@ -22,7 +22,10 @@
     "timeout_sec": 180,
     "max_inflight": 3,
     "rate_limit_retries": 3,
-    "rate_limit_wait_sec": [2, 30]
+    "rate_limit_wait_sec": [2, 30],
+    "network_retries": 2,
+    "network_retry_wait_sec": 5,
+    "network_error_markers": ["APIConnectionError", "InternalServerError"]
   },
   "stage1": {
     "attempts": 2,

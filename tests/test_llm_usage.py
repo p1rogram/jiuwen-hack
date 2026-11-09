@@ -36,12 +36,22 @@ class FakeOpenAI:
     def __init__(self):
         self.bodies: list[dict] = []
         self.usage: dict | None = {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
+        self.fail_codes: list[int] = []  # коды ошибок для первых запросов, по одному на запрос
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 owner.bodies.append(body)
+                if owner.fail_codes:
+                    code = owner.fail_codes.pop(0)
+                    data = json.dumps({"error": {"message": f"fake {code}", "type": "server_error"}}).encode()
+                    self.send_response(code)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
                 reply = {"id": "c1", "object": "chat.completion", "created": 0, "model": body.get("model"),
                          "choices": [{"index": 0, "finish_reason": "stop",
                                       "message": {"role": "assistant", "content": CONTENT}}]}
@@ -77,7 +87,7 @@ class GatewayTest(unittest.TestCase):
         self.ledger = BudgetLedger(100_000)
 
     def gateway(self, model_map):
-        llm = dict(STAND["llm"], timeout_sec=10, rate_limit_retries=0)
+        llm = dict(STAND["llm"], timeout_sec=10, rate_limit_retries=0, network_retry_wait_sec=0)
         acc = STAND["accounting"]
         return LlmGateway(self.srv.base_url, "test-key", llm,
                           TokenPricing(acc["input_weight"], acc["reasoning_in_completion"]),
@@ -134,6 +144,40 @@ class GatewayTest(unittest.TestCase):
         w = STAND["accounting"]["input_weight"]
         self.assertAlmostEqual(reply.cost, 20 + math.ceil(prompt_chars(MESSAGES) / cpt) * w)
         self.assertTrue(self.calls()[-1]["usage_missing"])
+
+    def test_server_error_is_retried_without_charge(self):
+        # должно пройти (spec robustness, шаг 4): 500, затем 200 → ответ получен, списан один вызов
+        self.srv.fail_codes = [500]
+        reply = self.ask(self.gateway({}))
+        self.assertEqual(reply.text, CONTENT)
+        self.assertEqual(len(self.srv.bodies), 2)
+        self.assertAlmostEqual(self.ledger.spent, reply.cost)
+        kinds = [r["kind"] for r in self.calls()]
+        self.assertEqual(kinds, ["net_retry", "llm_call"])
+
+    def test_retries_are_limited(self):
+        self.srv.fail_codes = [502] * 10
+        with self.assertRaises(Exception):
+            self.ask(self.gateway({}))
+        self.assertEqual(len(self.srv.bodies), 1 + STAND["llm"]["network_retries"])
+        self.assertEqual(self.ledger.spent, 0)
+
+    def test_connection_refused_is_retried(self):
+        self.srv.close()  # порт свободен — соединение отклоняется до ответа сервера
+        with self.assertRaises(Exception):
+            self.ask(self.gateway({}))
+        retries = [r for r in self.calls() if r["kind"] == "net_retry"]
+        self.assertEqual(len(retries), STAND["llm"]["network_retries"])
+        self.assertIn("APIConnectionError", retries[0]["error"])
+        self.assertEqual(self.ledger.spent, 0)
+
+    def test_client_error_is_not_retried(self):
+        # должно быть отклонено: 400 — ошибка запроса, повтор ничего не даст
+        self.srv.fail_codes = [400]
+        with self.assertRaises(Exception):
+            self.ask(self.gateway({}))
+        self.assertEqual(len(self.srv.bodies), 1)
+        self.assertEqual(self.calls() if self.log_path.exists() else [], [])
 
 
 if __name__ == "__main__":

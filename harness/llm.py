@@ -52,6 +52,11 @@ class LlmGateway:
         self._inflight = asyncio.Semaphore(int(llm_cfg["max_inflight"]))
         self._retries = int(llm_cfg["rate_limit_retries"])
         self._wait_min, self._wait_max = llm_cfg["rate_limit_wait_sec"]
+        # обрыв соединения и 5xx: ответа нет, токены не списаны — повтор безопасен; таймаут не повторяем —
+        # сервер мог сгенерировать ответ и посчитать токены у себя (spec robustness, шаг 4)
+        self._net_retries = int(llm_cfg["network_retries"])
+        self._net_wait = float(llm_cfg["network_retry_wait_sec"])
+        self._net_markers = tuple(llm_cfg["network_error_markers"])
 
     def _rate_limit_wait(self, error: str) -> float | None:
         if "429" not in error:
@@ -64,20 +69,32 @@ class LlmGateway:
             wait = self._wait_min
         return min(max(wait, self._wait_min), self._wait_max)
 
+    def _is_network_error(self, error: str) -> bool:
+        return any(m in error for m in self._net_markers)
+
     async def _invoke(self, model: str, messages: list[dict[str, str]], max_tokens: int, task_id: str):
-        # повтор только после времени сброса из ответа: частые повторы прокси наказывает паузой на 60 мин
-        for attempt in range(self._retries + 1):
+        # 429: повтор только после времени сброса из ответа — частые повторы прокси наказывает паузой на 60 мин
+        rate_limited = net_failed = 0
+        while True:
             try:
                 async with self._inflight:
                     return await self._model(model).invoke(messages, max_tokens=max_tokens,
                                                            **self._extra_body(model))
             except Exception as exc:
-                wait = self._rate_limit_wait(str(exc))
-                if wait is None or attempt == self._retries:
+                error = str(exc)
+                wait = self._rate_limit_wait(error)
+                if wait is not None and rate_limited < self._retries:
+                    rate_limited += 1
+                    self._log.write({"kind": "rate_limit", "task_id": task_id, "model": model,
+                                     "wait_sec": round(wait, 1)})
+                elif wait is None and self._is_network_error(error) and net_failed < self._net_retries:
+                    net_failed += 1
+                    wait = self._net_wait
+                    self._log.write({"kind": "net_retry", "task_id": task_id, "model": model,
+                                     "wait_sec": wait, "error": error[:300]})
+                else:
                     raise
-                self._log.write({"kind": "rate_limit", "task_id": task_id, "model": model, "wait_sec": round(wait, 1)})
                 await asyncio.sleep(wait)
-        raise RuntimeError("unreachable")
 
     def served_name(self, name: str) -> str:
         return self._model_map.get(name, {}).get("model", name)

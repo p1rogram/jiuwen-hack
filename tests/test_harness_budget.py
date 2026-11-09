@@ -104,15 +104,38 @@ class HarnessBudget(unittest.TestCase):
         self.assertEqual(sorted(r["status"] for r in recs), ["skipped_budget", "verified"])
         self.assertEqual(sum(r["kind"] == "task" for r in h.log.records), 2)
 
-    def test_detector_crash_is_one_task_error(self):
-        class Boom:
-            def check(self, task):
-                raise RuntimeError("detector")
 
-        h = harness(1000, 100, {"t": stats(100)})
-        h.detector = Boom()
-        recs = asyncio.run(h.run(tasks(2)))
-        self.assertEqual([r["status"] for r in recs], ["error", "error"])
+
+class BrokenDetector:
+    def check(self, task):
+        raise RuntimeError("detector boom")
+
+
+class BrokenPrompt:
+    async def build(self, task):
+        raise RuntimeError("prompt boom")
+
+
+class DetectorFailure(unittest.TestCase):
+    """spec robustness, шаг 3: сбой детектора невыполнимых не отбрасывает задачу."""
+
+    def test_detector_error_does_not_drop_task(self):
+        # должно пройти: детектор бросает → задача решена без сигналов, в журнале — событие detector_error
+        h = harness(10_000, 100, {"t": stats(100)})
+        h.detector = BrokenDetector()
+        recs = asyncio.run(h.run(tasks(1)))
+        self.assertEqual([r["status"] for r in recs], ["verified"])
+        errors = [r for r in h.log.records if r["kind"] == "detector_error"]
+        self.assertEqual(len(errors), 1)
+        self.assertIn("detector boom", errors[0]["error"])
+
+    def test_prompt_error_is_still_task_error(self):
+        # должно быть отклонено: без сообщения задачи решать нечего — по-прежнему status error
+        h = harness(10_000, 100, {"t": stats(100)})
+        h.detector, h.prompt = BrokenDetector(), BrokenPrompt()
+        recs = asyncio.run(h.run(tasks(1)))
+        self.assertEqual([r["status"] for r in recs], ["error"])
+        self.assertIn("prompt boom", recs[0]["error"])
 
 
 if __name__ == "__main__":
