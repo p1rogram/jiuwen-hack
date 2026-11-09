@@ -35,7 +35,7 @@
 
 ## Откуда берётся контент
 - Параметры (модели, лимиты, бюджет, `stage2.max_steps`): `config/harness.json`; отличия стенда (адрес, имена
-  моделей на сервере, `max_inflight`) — `config/profiles/*.json` (сейчас `spark`); параметры модели расхода:
+  моделей на сервере, `max_inflight`) — `config/profiles/*.json` (локальные, в git не входят; тестовый — `tests/fixtures/profiles/stand.json`); параметры модели расхода:
   `config/cost_model.json` (пишет `tools/calibrate_cost.py`); вероятности веток и `p_feasible`:
   `config/success_model.json` (раздел `priors` — вручную, остальное пишет `tools/calibrate_success.py`).
 - Форматы строк консоли, подписи статусов, интервалы, замены символов, выводы журнала openjiuwen: `config/console.json`.

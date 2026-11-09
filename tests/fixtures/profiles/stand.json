@@ -1,0 +1,42 @@
+{
+  "_comment": "Тестовый профиль стенда: локальный OpenAI-совместимый сервер, другие имена моделей, без ключа.",
+  "llm_base_url_default": "http://127.0.0.1:22500/v1",
+  "api_key_optional": true,
+  "model_map": {
+    "qwen3.6-35b-a3b-noreason": {
+      "model": "served/qwen3.6-35b-a3b",
+      "extra_body": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    },
+    "qwen3.6-35b-a3b": {
+      "model": "served/qwen3.6-35b-a3b",
+      "extra_body": {
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        }
+      }
+    },
+    "qwen3.8-27b-noreason": {
+      "model": "served/qwen3.8-27b",
+      "extra_body": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    },
+    "qwen3.8-27b": {
+      "model": "served/qwen3.8-27b",
+      "extra_body": {
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        }
+      }
+    }
+  },
+  "llm": {
+    "max_inflight": 4
+  }
+}

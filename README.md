@@ -19,43 +19,8 @@ docker run --rm --read-only --tmpfs /tmp:rw,size=2g --cap-drop ALL --cpus 8 --me
 Локально: `python tools/docker_run.py <tasks-dir> <out-dir>`. Ключ берётся из `.env` и передаётся в контейнер
 по имени переменной.
 
-## DGX Spark (arm64)
-
-Тот же `Dockerfile` и тот же `requirements.lock` собираются на amd64 и arm64: база `python:3.12-slim@sha256:…` —
-мультиархитектурный индекс, все пакеты lock есть колёсами под обе архитектуры (`python tools/check_wheels.py`).
-На Spark харнесс ходит в LAIKA (`http://127.0.0.1:22500/v1`) с профилем `spark` (`config/profiles/spark.json`):
-адрес, имена моделей на сервере (`nvidia/Qwen3.6-35B-A3B-NVFP4`), `chat_template_kwargs.enable_thinking` для
-«noreason», `max_inflight` 4. Общий `config/harness.json` не меняется. Ключ: если LAIKA его требует —
-`export LLM_API_KEY=…`; без ключа профиль подставляет заглушку.
-
-1. Запустить модель (одна за раз; этап 1 и этап 2 — одна модель):
-   ```bash
-   laika start vllm nvidia/Qwen3.6-35B-A3B-NVFP4 --context 131072 --reasoning off --mtp on --kv-cache-dtype fp8 --batch-size 4 --max-output-tokens 8192
-   ```
-2. Проверить сервер — имена моделей, `usage`, входят ли рассуждения в `completion_tokens`:
-   ```bash
-   python3 tools/probe_server.py --out probe.json
-   ```
-   Имя модели не совпало с `model_map` в профиле — поправить профиль. `usage: MISSING` — прогон пойдёт, но расход
-   будет оценкой (`usage_missing` в журнале).
-3. Образ. Есть доступ к Docker и сеть наружу — собрать прямо на Spark (это и есть проверка «как у жюри на arm64»):
-   ```bash
-   docker build -t jiuwen-harness .
-   python3 tools/docker_run.py "$TASKS" out --profile spark --image jiuwen-harness
-   ```
-   Нет — собрать на ПК под arm64 и запустить через Apptainer (без root):
-   ```bash
-   docker buildx build --platform linux/arm64 -t jiuwen-harness:arm64 --load .
-   docker save -o jiuwen-harness-arm64.tar jiuwen-harness:arm64
-   ```
-   Перенести на Spark папку репозитория и `jiuwen-harness-arm64.tar`, там:
-   ```bash
-   apptainer build jiuwen-harness.sif docker-archive://jiuwen-harness-arm64.tar
-   python3 tools/docker_run.py "$TASKS" out --profile spark --runtime apptainer --image jiuwen-harness.sif
-   ```
-4. Калибровочные прогоны — с `--budget 1000000`. Перед стартом `docker_run` проверяет, что сервер отвечает и
-   держит модель этапов; иначе выходит, не потратив токенов. В журнале `run_start` помечен `profile: spark`:
-   веса на Spark NVFP4, поэтому эти журналы держим отдельно от калибровки по прокси жюри.
+Образ один для amd64 и arm64: база `python:3.12-slim@sha256:…` — мультиархитектурный индекс, все пакеты
+`requirements.lock` есть колёсами под обе архитектуры (проверка — `python tools/check_wheels.py`).
 
 ## Как работает
 

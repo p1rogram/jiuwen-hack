@@ -1,7 +1,7 @@
 """LlmGateway против поддельного OpenAI-сервера (spec spark-build, шаги 2–3).
 
 Ожидания: формула учёта — harness/budget.py (выходные + вход × input_weight, контракт регламента); формат ответа —
-OpenAI Chat Completions (usage.prompt_tokens / completion_tokens); имена и поля тела — config/profiles/spark.json.
+OpenAI Chat Completions (usage.prompt_tokens / completion_tokens); имена и поля тела — tests/fixtures/profiles/stand.json.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import math
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -18,10 +19,13 @@ from harness.budget import BudgetLedger, TokenPricing
 from harness.calllog import JsonlLog
 from harness.llm import LlmGateway
 from harness.prompting import prompt_chars
+from harness import settings
 from harness.settings import load_settings_raw
 
-SPARK = load_settings_raw("spark")
-LOGICAL = SPARK["models"]["stage1"]
+FIXTURES = Path(__file__).parent / "fixtures" / "profiles"  # профиль стенда для тестов; настоящие профили — локальные
+with mock.patch.object(settings, "PROFILES_DIR", FIXTURES):
+    STAND = load_settings_raw("stand")
+LOGICAL = STAND["models"]["stage1"]
 CONTENT = "print(42)\n" * 20
 MESSAGES = [{"role": "user", "content": "write a script"}]
 
@@ -73,8 +77,8 @@ class GatewayTest(unittest.TestCase):
         self.ledger = BudgetLedger(100_000)
 
     def gateway(self, model_map):
-        llm = dict(SPARK["llm"], timeout_sec=10, rate_limit_retries=0)
-        acc = SPARK["accounting"]
+        llm = dict(STAND["llm"], timeout_sec=10, rate_limit_retries=0)
+        acc = STAND["accounting"]
         return LlmGateway(self.srv.base_url, "test-key", llm,
                           TokenPricing(acc["input_weight"], acc["reasoning_in_completion"]),
                           self.ledger, JsonlLog(self.log_path), model_map)
@@ -87,12 +91,12 @@ class GatewayTest(unittest.TestCase):
         return [json.loads(line) for line in self.log_path.read_text(encoding="utf-8").splitlines()]
 
     def test_model_map_sends_served_name_and_extra_body(self):
-        self.ask(self.gateway(SPARK["model_map"]))
+        self.ask(self.gateway(STAND["model_map"]))
         body = self.srv.bodies[-1]
-        self.assertEqual(body["model"], "nvidia/Qwen3.6-35B-A3B-NVFP4")
+        self.assertEqual(body["model"], "served/qwen3.6-35b-a3b")
         self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
         rec = self.calls()[-1]
-        self.assertEqual((rec["model"], rec["served_model"]), (LOGICAL, "nvidia/Qwen3.6-35B-A3B-NVFP4"))
+        self.assertEqual((rec["model"], rec["served_model"]), (LOGICAL, "served/qwen3.6-35b-a3b"))
 
     def test_without_map_name_passes_unchanged(self):
         self.ask(self.gateway({}))
@@ -102,16 +106,16 @@ class GatewayTest(unittest.TestCase):
         self.assertNotIn("served_model", self.calls()[-1])
 
     def test_usage_charged_exactly(self):
-        reply = self.ask(self.gateway(SPARK["model_map"]))
-        self.assertAlmostEqual(reply.cost, 20 + 100 * SPARK["accounting"]["input_weight"])
+        reply = self.ask(self.gateway(STAND["model_map"]))
+        self.assertAlmostEqual(reply.cost, 20 + 100 * STAND["accounting"]["input_weight"])
         self.assertAlmostEqual(self.ledger.spent, reply.cost)
         self.assertNotIn("usage_missing", self.calls()[-1])
 
     def test_missing_usage_is_not_free(self):
         self.srv.usage = None
-        reply = self.ask(self.gateway(SPARK["model_map"]))
-        cpt = SPARK["accounting"]["missing_usage_chars_per_token"]
-        w = SPARK["accounting"]["input_weight"]
+        reply = self.ask(self.gateway(STAND["model_map"]))
+        cpt = STAND["accounting"]["missing_usage_chars_per_token"]
+        w = STAND["accounting"]["input_weight"]
         expected = math.ceil(len(CONTENT) / cpt) + math.ceil(prompt_chars(MESSAGES) / cpt) * w  # spec: обе части
         self.assertAlmostEqual(reply.cost, expected)
         self.assertAlmostEqual(self.ledger.spent, reply.cost)
@@ -126,8 +130,8 @@ class GatewayTest(unittest.TestCase):
     def test_zero_prompt_tokens_estimated(self):
         self.srv.usage = {"prompt_tokens": 0, "completion_tokens": 20, "total_tokens": 20}
         reply = self.ask(self.gateway({}))
-        cpt = SPARK["accounting"]["missing_usage_chars_per_token"]
-        w = SPARK["accounting"]["input_weight"]
+        cpt = STAND["accounting"]["missing_usage_chars_per_token"]
+        w = STAND["accounting"]["input_weight"]
         self.assertAlmostEqual(reply.cost, 20 + math.ceil(prompt_chars(MESSAGES) / cpt) * w)
         self.assertTrue(self.calls()[-1]["usage_missing"])
 

@@ -13,6 +13,17 @@ from harness import settings
 BASE = json.loads(settings.CONFIG_PATH.read_text(encoding="utf-8"))
 KEY_NAMES = BASE["api_key_env_names"] + BASE["base_url_env_names"] + [settings.PROFILE_ENV]
 
+FIXTURES = Path(__file__).parent / "fixtures" / "profiles"  # профиль стенда для тестов; настоящие профили — локальные
+_profiles = mock.patch.object(settings, "PROFILES_DIR", FIXTURES)
+
+
+def setUpModule():
+    _profiles.start()
+
+
+def tearDownModule():
+    _profiles.stop()
+
 
 def clean_env(**extra: str):
     env = {k: v for k, v in os.environ.items() if k not in KEY_NAMES}
@@ -25,13 +36,13 @@ class ProfileMergeTest(unittest.TestCase):
         self.assertEqual(settings.load_settings_raw(), BASE)
         self.assertEqual(settings.load_settings_raw(None), BASE)
 
-    def test_spark_overrides_only_its_keys(self):
-        raw = settings.load_settings_raw("spark")
+    def test_stand_overrides_only_its_keys(self):
+        raw = settings.load_settings_raw("stand")
         self.assertEqual(raw["llm_base_url_default"], "http://127.0.0.1:22500/v1")
         self.assertEqual(raw["llm"]["max_inflight"], 4)
         self.assertTrue(raw["api_key_optional"])
         entry = raw["model_map"][BASE["models"]["stage1"]]
-        self.assertEqual(entry["model"], "nvidia/Qwen3.6-35B-A3B-NVFP4")
+        self.assertEqual(entry["model"], "served/qwen3.6-35b-a3b")
         self.assertEqual(entry["extra_body"], {"chat_template_kwargs": {"enable_thinking": False}})
         # остальное — как в базе, включая соседние ключи вложенного раздела
         self.assertEqual({k: v for k, v in raw["llm"].items() if k != "max_inflight"},
@@ -54,18 +65,18 @@ class ProfileMergeTest(unittest.TestCase):
 
 class ProfileResolveTest(unittest.TestCase):
     def test_bad_names_rejected(self):
-        for name in ("../harness", "Spark", "spark/x", "..", "a" * 40):
+        for name in ("../harness", "Stand", "stand/x", "..", "a" * 40):
             with self.subTest(name=name), self.assertRaises(SystemExit):
                 settings.resolve_profile(name)
 
     def test_missing_profile_rejected(self):
         with self.assertRaises(SystemExit) as cm:
             settings.resolve_profile("nosuch")
-        self.assertIn("spark", str(cm.exception))
+        self.assertIn("stand", str(cm.exception))
 
     def test_env_used_when_arg_absent(self):
-        with clean_env(HARNESS_PROFILE="spark"):
-            self.assertEqual(settings.resolve_profile(None), "spark")
+        with clean_env(HARNESS_PROFILE="stand"):
+            self.assertEqual(settings.resolve_profile(None), "stand")
         with clean_env():
             self.assertIsNone(settings.resolve_profile(None))
 
@@ -84,12 +95,12 @@ class ApiKeyTest(unittest.TestCase):
         self.no_dotenv.start()
         self.addCleanup(self.no_dotenv.stop)
 
-    def test_spark_without_key_uses_placeholder(self):
+    def test_stand_without_key_uses_placeholder(self):
         with clean_env():
-            s = settings.load_settings(profile="spark")
+            s = settings.load_settings(profile="stand")
         self.assertEqual(s.api_key, settings.NO_KEY_PLACEHOLDER)
         self.assertEqual(s.base_url, "http://127.0.0.1:22500/v1")
-        self.assertEqual(s.profile, "spark")
+        self.assertEqual(s.profile, "stand")
 
     def test_no_profile_without_key_still_fails(self):
         with clean_env(), self.assertRaises(SystemExit):
@@ -97,7 +108,7 @@ class ApiKeyTest(unittest.TestCase):
 
     def test_real_key_wins_over_placeholder(self):
         with clean_env(LLM_API_KEY="laika-key"):
-            s = settings.load_settings(profile="spark")
+            s = settings.load_settings(profile="stand")
         self.assertEqual(s.api_key, "laika-key")
 
 
