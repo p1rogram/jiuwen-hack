@@ -99,6 +99,19 @@ class ClassHeader(unittest.TestCase):
         self.assertEqual(ns["P"](5).x, 5)
         self.assertEqual(ns["P"]().f(), 2)
 
+    def test_bare_partial_class_keeps_base_and_decorator(self):
+        orig = ("from dataclasses import dataclass\n\n\nclass Base:\n    kind = 'base'\n\n\n"
+                "@dataclass\nclass A(Base):\n    x: int = 0\n\n    def m(self):\n        return 1\n")
+        ns = run(merge_source(orig, "class A:\n    def m(self):\n        return 2\n"))
+        a = ns["A"](7)
+        self.assertEqual((a.x, a.kind, a.m()), (7, "base", 2))
+
+    def test_patch_base_without_old_decorator_keeps_old_header(self):
+        orig = ("from dataclasses import dataclass\n\n\nclass Base:\n    kind = 'base'\n\n\n"
+                "@dataclass\nclass A(Base):\n    x: int = 0\n\n    def m(self):\n        return 1\n")
+        ns = run(merge_source(orig, "class A(Base):\n    def m(self):\n        return 2\n"))
+        self.assertEqual((ns["A"](7).x, ns["A"]().m()), (7, 2))
+
     def test_same_header_untouched(self):
         text = merge_source(self.ORIG, "class A(Base):\n    def f(self):\n        return 10\n")
         self.assertIn("class A(Base):\n", text)

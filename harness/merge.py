@@ -132,8 +132,9 @@ def _merge_members(old: ast.ClassDef, new: ast.ClassDef, patch_lines: list[str],
 
 def _merge_header(old: ast.ClassDef, new: ast.ClassDef, patch_lines: list[str], nl: str, edits: _Edits) -> None:
     """Базы, keywords и декораторы класса правки заменяют прежние: вклейка по членам их бы молча потеряла.
-    Заголовок — строки от декораторов до первого члена (комментарии между ними заменяются вместе с ним)."""
-    if _header_key(old) == _header_key(new):
+    Заголовок — строки от декораторов до первого члена (комментарии между ними заменяются вместе с ним).
+    Голый `class A:` правки — заглушка частичного класса, а не удаление баз: заголовок не трогаем."""
+    if _header_key(old) == _header_key(new) or not _covers(new, old):
         return
     old_end, new_end = _start(old.body[0]) - 1, _start(new.body[0]) - 1
     if old_end < old.lineno or new_end < new.lineno:
@@ -141,6 +142,12 @@ def _merge_header(old: ast.ClassDef, new: ast.ClassDef, patch_lines: list[str], 
                          f"send the class with its members on separate lines")
     text = _reindent(nl.join(patch_lines[_start(new) - 1:new_end]) + nl, new.col_offset, old.col_offset, nl)
     edits.replace[_start(old)] = (old_end, text)
+
+
+def _covers(new: ast.ClassDef, old: ast.ClassDef) -> bool:
+    """Заголовок правки задаёт всё, что было в прежнем: базы/keywords и декораторы (что не прислано — не стираем)."""
+    return (bool(new.bases or new.keywords) or not (old.bases or old.keywords)) \
+        and (bool(new.decorator_list) or not old.decorator_list)
 
 
 def _header_key(node: ast.ClassDef) -> tuple:
