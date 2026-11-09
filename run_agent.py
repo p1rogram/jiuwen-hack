@@ -43,13 +43,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--only", nargs="*", default=None, help="решать только эти task_id")
     p.add_argument("--force-stage2", action="store_true",
                    help="замер этапа 2: этап 1 не вызывается, каждая задача сразу идёт в этап 2")
+    p.add_argument("--force-branch", choices=["retry", "stage2"], default=None,
+                   help="замер веток: после провала этапа 1 только эта ветка (λ = 0); после неудачного retry — этап 2")
     return p.parse_args()
 
 
 class Harness:
     profile: str | None = None  # профиль стенда для run_start; тесты собирают Harness без __init__
 
-    def __init__(self, settings: Settings, model: str | None, force_stage2: bool = False):
+    def __init__(self, settings: Settings, model: str | None, force_stage2: bool = False,
+                 force_branch: str | None = None):
         acc = settings.section("accounting")
         self.ledger = BudgetLedger(settings.budget)
         run_id = time.strftime("%Y%m%d-%H%M%S")
@@ -64,14 +67,14 @@ class Harness:
                                    stage1_cfg["patch_types"], stage1_cfg["patch_prompts"])
         verifier = Verifier(stage1_cfg["error_tail_chars"], marker)
         models = settings.section("models")
-        stage1 = Stage1Solver(gateway, self.prompt, verifier, model or models["stage1"], stage1_cfg)
+        stage1 = Stage1Solver(gateway, self.prompt, verifier, model or models["stage1"], stage1_cfg, self.log)
         cost_model = CostModel(load_config(settings.raw["cost_model_file"]), acc["input_weight"])
         stage2 = Stage2Solver(gateway, verifier, cost_model, model or models["stage2"], settings.section("stage2"),
                               stage1_cfg["patch_types"])
         success = SuccessModel(load_config(settings.raw["success_model_file"]))
         self.policy = DecisionPolicy(success, cost_model, self.ledger)
         self.solver = TaskPipeline(stage1, stage2, self.policy, success, self.lam,
-                                   load_prompt("stage2_forced.txt") if force_stage2 else None, self.log)
+                                   load_prompt("stage2_forced.txt") if force_stage2 else None, self.log, force_branch)
         self.planner = TaskPlanner(cost_model, self.ledger, self.policy.priority)
         self.pending: dict[str, Prepared] = {}  # ещё не начатые задачи — по ним считается λ
         self.writer = ResultsWriter(settings.out_path)
@@ -196,7 +199,7 @@ def main() -> None:
     tasks = load_tasks(args.tasks_dir)
     if args.only:
         tasks = [t for t in tasks if t.task_id in set(args.only)]
-    harness = Harness(settings, args.model, args.force_stage2)
+    harness = Harness(settings, args.model, args.force_stage2, args.force_branch)
     # консоль только смотрит журнал: строки задач и развилок по ходу, прогресс в stderr, сводка в конце
     console = ConsoleView(load_config("console.json"), harness.ledger)
     harness.log.subscribe(console)

@@ -4,9 +4,9 @@
     "prior_weight": 5.0,
     "types": {
       "coding": {
-        "chars_per_token": 3.484,
-        "out_mean": 287.1,
-        "out_high": 695.0,
+        "chars_per_token": 3.455,
+        "out_mean": 192.6,
+        "out_high": 360.0,
         "p_retry": 0.0096,
         "n": 51
       },
@@ -89,8 +89,6 @@
     "run-20261109-202828.jsonl",
     "run-20261109-203020.jsonl",
     "run-20261109-205030.jsonl",
-    "coding stage1 (patch): run-20261110-002104.jsonl",
-    "coding stage1 (patch): run-20261110-002205.jsonl",
-    "coding stage1 (patch): run-20261110-002258.jsonl"
+    "coding stage1 (patch, BUGS:): run-20261110-013259.jsonl"
   ]
 }

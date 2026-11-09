@@ -7,17 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from harness.executor import RunResult
+from harness.merge import DEFS, IMPORTS, PatchError, merge_source, method_names, parse_source
+
+__all__ = ["PatchApplier", "PatchBlock", "PatchError", "find_patch", "guess_blocks", "merge_source", "parse_blocks"]
 
 CODE_RE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL)
 FILE_RE = re.compile(r"#\s*file:\s*[`'\"]?([^`'\"\s]+)[`'\"]?\s*$", re.IGNORECASE)
-DEFS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-IMPORTS = (ast.Import, ast.ImportFrom)
-
-
-class PatchError(ValueError):
-    """Правку нельзя применить; текст уходит модели в повтор."""
-
-
 @dataclass(frozen=True)
 class PatchBlock:
     path: str
@@ -58,7 +53,7 @@ def find_patch(text: str, workspace: Path) -> list[PatchBlock] | None:
 
 def guess_blocks(code: str | None, workspace: Path) -> list[PatchBlock] | None:
     """Блок без заголовка: только функции/классы (и импорты), и все их имена есть в единственном модуле задачи
-    (не test_*.py) — это правка этого модуля. Как скрипт такой блок лишь определяет функции и файл не меняет
+    (не test_*.py; методы классов — тоже) — это правка этого модуля. Как скрипт такой блок лишь определяет функции и файл не меняет
     (образ 2026-11-10, coding_0003: 50 токенов впустую, задачу дорешал этап 2)."""
     if not code:
         return None
@@ -74,10 +69,11 @@ def guess_blocks(code: str | None, workspace: Path) -> list[PatchBlock] | None:
         if path.name.startswith(("test_", "_")):
             continue
         try:
-            defined = {n.name for n in ast.parse(path.read_bytes().decode("utf-8", "replace")).body
-                       if isinstance(n, DEFS)}
+            module = ast.parse(path.read_bytes().decode("utf-8", "replace"))
         except SyntaxError:
             continue
+        # методы классов тоже: одиночный метод вклеивается в свой класс (merge_source)
+        defined = {n.name for n in module.body if isinstance(n, DEFS)} | method_names(module)
         if names <= defined:
             found.append(path.name)
     return [PatchBlock(found[0], code.strip("\n") + "\n")] if len(found) == 1 else None
@@ -85,72 +81,6 @@ def guess_blocks(code: str | None, workspace: Path) -> list[PatchBlock] | None:
 
 def _header(line: str) -> re.Match | None:
     return FILE_RE.fullmatch(line.strip().strip("`*").strip())
-
-
-def merge_source(original: str, patch: str) -> str:
-    """Функции/классы патча заменяют одноимённые (последнее определение), новые — в конец; импорт — если его нет;
-    присваивание имени заменяет такое же или встаёт после импортов. Остальные инструкции патча не переносятся."""
-    orig_tree = _parse(original, "the original file")
-    patch_tree = _parse(patch, "your code")
-    nl = "\r\n" if "\r\n" in original else "\n"
-    lines = original.splitlines(keepends=True)
-    if lines and not lines[-1].endswith(("\n", "\r")):
-        lines[-1] += nl
-    patch_lines = patch.splitlines()
-    named = {}
-    have_imports = set()
-    body = orig_tree.body
-    # новые импорты и присваивания — после последнего импорта, иначе после docstring модуля, иначе в начало
-    imports_end = body[0].end_lineno if body and isinstance(body[0], ast.Expr) \
-        and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str) else 0
-    for node in body:
-        name = _name(node)
-        if name:
-            named[name] = node  # последнее определение — действующее
-        if isinstance(node, IMPORTS):
-            imports_end = node.end_lineno
-            have_imports.add(ast.dump(node))
-
-    replace: dict[int, tuple[int, str]] = {}  # начальная строка (1-based) → (конечная, новый текст)
-    head: list[str] = []
-    tail: list[str] = []
-    for node in patch_tree.body:
-        text = _segment(patch_lines, node, nl)
-        if isinstance(node, IMPORTS):
-            if ast.dump(node) not in have_imports:
-                have_imports.add(ast.dump(node))
-                head.append(text)
-            continue
-        name = _name(node)
-        if not name:
-            continue
-        old = named.get(name)
-        if old is not None:
-            replace[_start(old)] = (old.end_lineno, text)
-        elif isinstance(node, DEFS):
-            tail.append(text)
-        else:
-            head.append(text)
-
-    out: list[str] = []
-    i = 1
-    while i <= len(lines):
-        if head and i > imports_end:
-            out.extend(head)
-            head = []
-        if i in replace:
-            end, text = replace[i]
-            out.append(text)
-            i = end + 1
-        else:
-            out.append(lines[i - 1])
-            i += 1
-    out.extend(head)
-    for text in tail:
-        out.append(nl + nl + text if out and out[-1].strip() else text)
-    result = "".join(out)
-    _parse(result, "the patched file")
-    return result
 
 
 class PatchApplier:
@@ -176,7 +106,7 @@ class PatchApplier:
             elif path.is_file():
                 current = path.read_bytes().decode("utf-8", "replace")
             else:
-                _parse(block.source, "your code")
+                parse_source(block.source, "your code")
                 updates[path] = block.source
                 continue
             updates[path] = merge_source(current, block.source)
@@ -196,29 +126,3 @@ class PatchApplier:
         if root not in path.parents:
             raise PatchError(f"path {raw!r} is outside the task folder")
         return path
-
-
-def _parse(source: str, what: str) -> ast.Module:
-    try:
-        return ast.parse(source)
-    except SyntaxError as exc:
-        raise PatchError(f"syntax error in {what}, line {exc.lineno}: {exc.msg}") from None
-
-
-def _name(node: ast.stmt) -> str | None:
-    if isinstance(node, DEFS):
-        return node.name
-    if isinstance(node, (ast.Assign, ast.AnnAssign)):
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        if len(targets) == 1 and isinstance(targets[0], ast.Name):
-            return targets[0].id
-    return None
-
-
-def _start(node: ast.stmt) -> int:
-    decos = getattr(node, "decorator_list", [])
-    return min([node.lineno] + [d.lineno for d in decos])
-
-
-def _segment(lines: list[str], node: ast.stmt, nl: str) -> str:
-    return nl.join(lines[_start(node) - 1:node.end_lineno]) + nl

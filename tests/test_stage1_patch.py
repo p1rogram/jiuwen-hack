@@ -114,5 +114,46 @@ class PatchStage1(unittest.TestCase):
         self.assertEqual(outcome.applied, "script")
 
 
+class RecordLog:
+    def __init__(self):
+        self.records = []
+
+    def write(self, record):
+        self.records.append(record)
+
+
+class ShapeEvent(unittest.TestCase):
+    """specs/coding-ab, пункт а): событие answer_shape на каждую попытку patch-типа, посчитанное до вклейки."""
+
+    setUp = PatchStage1.setUp
+    tearDown = PatchStage1.tearDown
+
+    def run_with_log(self, replies, task_type="coding"):
+        p = prompt()
+        task = Task("t", task_type, "Fix mylib.py", 1, "unittest", self.ws)
+        prepared = asyncio.run(p.build(task))
+        log = RecordLog()
+        solver = Stage1Solver(FakeGateway(replies), p, Verifier(500), "m", S1, log)
+        outcome = Outcome("t")
+        verdict = asyncio.run(solver.first(prepared, outcome))
+        if not verdict.ok:
+            asyncio.run(solver.retry(prepared, outcome, verdict))
+        return [r for r in log.records if r["kind"] == "answer_shape"]
+
+    def test_patch_attempt_logged_before_apply(self):
+        # add изменена относительно исходника; после вклейки она совпала бы с файлом и стала бы unchanged
+        (shape,) = self.run_with_log([PATCH])
+        self.assertEqual((shape["stage"], shape["applied"]), ("stage1.1", "patch"))
+        self.assertEqual((shape["changed"], shape["unchanged"]), (1, 0))
+
+    def test_each_attempt_logged(self):
+        shapes = self.run_with_log(["no code here", PATCH])
+        self.assertEqual([(s["stage"], s["applied"]) for s in shapes], [("stage1.1", "none"), ("stage1.2", "patch")])
+        self.assertEqual(shapes[0]["blocks"], 0)
+
+    def test_not_logged_for_other_types(self):
+        self.assertEqual(self.run_with_log([SCRIPT], task_type="data_analysis"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

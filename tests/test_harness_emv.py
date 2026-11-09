@@ -11,6 +11,7 @@ from harness.budget import BudgetLedger  # noqa: E402
 from harness.cost_model import CostModel  # noqa: E402
 from harness.decision import DecisionPolicy  # noqa: E402
 from harness.pipeline import TaskPipeline  # noqa: E402
+from harness.outcome import Outcome  # noqa: E402
 from harness.planner import TaskPlanner  # noqa: E402
 from harness.success_model import SuccessModel  # noqa: E402
 from harness.verifier import TESTS_FAIL, Verdict  # noqa: E402
@@ -96,6 +97,49 @@ class HarnessEmv(unittest.TestCase):
         self.assertEqual(recs["s"]["status"], "skipped_low_value")
         self.assertNotIn("s", h.stage1.tasks)
         self.assertNotIn("cost", recs["s"])
+
+
+class PassingStage1(FailingStage1):
+    async def first(self, prepared, outcome):
+        await super().first(prepared, outcome)
+        return Verdict(True, "DONE")
+
+
+class ForcedBranch(unittest.TestCase):
+    """specs/coding-ab, пункт в): --force-branch берёт только заданную ветку при любом λ."""
+
+    def solve(self, branch, stage1_cls=FailingStage1):
+        ledger = BudgetLedger(100_000)
+        success = SuccessModel(SUCCESS)
+        policy = DecisionPolicy(success, CostModel(COST, 0.1), ledger)
+        stage1, stage2, log = stage1_cls(ledger), CountingStage2(), FakeLog()
+        # λ огромна: без режима замера политика выбрала бы stop
+        pipe = TaskPipeline(stage1, stage2, policy, success, lambda: 1e9, None, log, branch)
+        p = prep("a")
+        ledger.reserve("a", 1000)
+        outcome = asyncio.run(pipe.solve(p, Outcome("a")))
+        return outcome, stage1, stage2
+
+    def test_forced_retry_then_stage2(self):
+        outcome, stage1, stage2 = self.solve("retry")
+        self.assertEqual([d["choice"] for d in outcome.decisions], ["retry", "stage2"])
+        self.assertEqual(outcome.decisions[0]["lambda"], 0)
+        self.assertEqual(len(stage1.tasks), 2)
+        self.assertEqual((stage2.tasks, outcome.solved_by), (["a"], "stage2"))
+
+    def test_forced_stage2_skips_retry(self):
+        outcome, stage1, stage2 = self.solve("stage2")
+        self.assertEqual([d["choice"] for d in outcome.decisions], ["stage2"])
+        self.assertEqual((len(stage1.tasks), stage2.tasks), (1, ["a"]))
+
+    def test_no_decision_when_stage1_passes(self):
+        outcome, _, stage2 = self.solve("retry", PassingStage1)
+        self.assertEqual((outcome.decisions, stage2.tasks, outcome.solved_by), ([], [], "stage1"))
+
+    def test_without_mode_huge_lambda_stops(self):
+        # должно быть отклонено без режима: та же λ даёт stop
+        outcome, _, stage2 = self.solve(None)
+        self.assertEqual(([d["choice"] for d in outcome.decisions], stage2.tasks), (["stop"], []))
 
 
 if __name__ == "__main__":

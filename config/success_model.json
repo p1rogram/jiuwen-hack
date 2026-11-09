@@ -1,6 +1,6 @@
 {
   "priors": {
-    "note": "вручную: stage1 — gen3 151/151 со скидкой на скрытый набор; retry и stage2 — осторожные, данных о провалах нет",
+    "note": "вручную: stage1 — gen3 151/151 со скидкой на скрытый набор; retry и stage2 — осторожные, данных о провалах нет; retry.tests_fail — 1/4 + замер --force-branch 2026-11-10 (3 из 3 coding, run-20261110-013810)",
     "branches": {
       "default": {
         "default": {
@@ -32,7 +32,7 @@
           "beta": 3.25
         },
         "tests_fail": {
-          "alpha": 1.0,
+          "alpha": 4.0,
           "beta": 4.0
         }
       },
@@ -103,8 +103,9 @@
         "beta": 3.25
       },
       "tests_fail": {
-        "alpha": 1.0,
-        "beta": 4.0
+        "alpha": 4.0,
+        "beta": 4.0,
+        "n": 3
       }
     },
     "stage2": {

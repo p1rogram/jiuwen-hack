@@ -12,7 +12,7 @@
 | `harness/planner.py` | порядок задач по `DecisionPolicy.priority`, допуск задачи по `high` с резервом в бюджете | выполнимость, решение | cost_model, budget |
 | `harness/success_model.py` | вероятности успеха веток (`stage1` по типу, `retry`/`stage2` по виду провала) и `p_feasible` по коду soft-сигнала: бета-априор + факт прогона | цены, выбор | `config/success_model.json` |
 | `harness/decision.py` (`DecisionPolicy`) | λ — цена токена (жадный рюкзак оставшихся), EMV веток после провала и резерв выбранной, `skip_soft`, приоритет `reward · p / E[цена]`; без LLM и ввода-вывода | вызовы модели | success_model, cost_model, budget |
-| `harness/pipeline.py` (`TaskPipeline`) | задача по дереву: этап 1 → развилка → повтор / этап 2 / стоп; событие `decision` в момент развилки; режим `--force-stage2` | расчёт EMV | solver, stage2, decision, calllog |
+| `harness/pipeline.py` (`TaskPipeline`) | задача по дереву: этап 1 → развилка → повтор / этап 2 / стоп; событие `decision` в момент развилки; режимы замера `--force-stage2` и `--force-branch retry\|stage2` (после провала этапа 1 — только эта ветка при λ = 0, после неудачного повтора — этап 2) | расчёт EMV | solver, stage2, decision, calllog |
 | `harness/stage2.py` (`Stage2Solver`) | этап 2: короткий цикл через `LlmGateway`, инструмент `run` (Python-скрипт в папке задачи; у `patch_types` блоки `# file:` вклеиваются), ответ `FINAL`, стоп по шагам / бюджету ветки / повтору | выбор ветки | llm, executor, verifier, cost_model |
 | `harness/outcome.py` | итог задачи по ходу решения (вызовы, развилки, переписка этапа 1) | — | — |
 | `harness/cost_model.py` | оценка цены этапа 1 (`mean`, `high`), повтора и этапа 2 (и одного его шага) по длине промпта и типу, поправка по факту прогона | выбор задач, учёт | `config/cost_model.json` |
@@ -20,8 +20,10 @@
 | `harness/feasibility/` | этап 0: невыполнимые задачи без LLM и без запуска кода задачи — общая проверка файлов (`files`) + по типу (`coding`, `data`, `math_check`, `search`), агрегатор `detector` | решение, порядок задач | `Task`, `config/feasibility.json` |
 | `harness/snapshot.py` | этап 0: срез папки задачи для промпта (файлы, вывод тестов, шапка CSV) | вызовы LLM | executor, kb_slice |
 | `harness/kb_slice.py` | узкий срез базы знаний: файлы с заголовком из вопроса + обход связей `Ключ: Значение` (`snapshot.kb_*`) | ранжирование без семян | — |
-| `harness/solver.py` | этап 1 по готовым сообщениям: одна попытка (`first` / `retry` с ошибкой) — вызов модели → скрипт → запуск (у `patch_types` — вклейка правки) → проверка | решение о повторе, учёт бюджета, запись ответа | llm, prompting, patching, executor, verifier |
-| `harness/patching.py` | ответ-правка: блоки с `# file: <путь>` (внутри или строкой перед блоком) или блок без заголовка из одних функций единственного модуля задачи, вклейка функций по имени через `ast`, все файлы или ни одного, только внутри папки задачи и не `test_*.py`; итог — `RunResult` для `Verifier` | выбор формата ответа | executor (`RunResult`) |
+| `harness/solver.py` | этап 1 по готовым сообщениям: одна попытка (`first` / `retry` с ошибкой) — вызов модели → скрипт → запуск (у `patch_types` — вклейка правки) → проверка; у `patch_types` до вклейки — событие `answer_shape` | решение о повторе, учёт бюджета, запись ответа | llm, prompting, patching, answer_shape, executor, verifier, calllog |
+| `harness/patching.py` | ответ-правка: блоки с `# file: <путь>` (внутри или строкой перед блоком) или блок без заголовка из одних функций (или методов классов) единственного модуля задачи; запись файлов — все или ни одного, только внутри папки задачи и не `test_*.py`; итог — `RunResult` для `Verifier` | выбор формата ответа, сама вклейка | merge, executor (`RunResult`) |
+| `harness/merge.py` | вклейка исходника правки в исходник файла через `ast` заменой диапазонов строк (остальное байт-в-байт): функции и присваивания по имени, класс — по членам, одиночный метод (`self`/`cls` или декоратор метода) — в единственный класс, где он есть (в нескольких — `PatchError`), импорты — если их нет | чтение и запись файлов | — |
+| `harness/answer_shape.py` | структура ответа этапа 1 в числах: символы до/после блоков кода, число блоков, функции правки изменённые / прежние (`ast` совпадает) / новые, `whole_file`; без ввода-вывода, текст ответа не хранится | — | merge, patching |
 | `harness/verifier.py` | бесплатная проверка результата по `check` (тесты, число, строка), вид провала (`no_code`, `script_error`, `tests_fail`, `bad_format`) или отказ модели `unsolvable` (маркер — вся последняя строка stdout), ответ из свежего `answer.txt` | — | executor |
 | `harness/executor.py` | запуск Python в папке задачи с таймаутом, без ключа API в env | — | — |
 | `harness/llm.py` | вызов модели через openjiuwen `Model`, семафор `max_inflight`, повтор при 429 и при обрыве/5xx (`network_*`), логическое имя → имя на сервере и поля тела (`model_map` профиля), списание бюджета; нет `usage` — оценка по символам с запасом (`usage_missing`) | выбор модели | budget, calllog |
@@ -31,7 +33,7 @@
 | `harness/console.py` (`ConsoleView`) | консоль прогона в stderr: счётчики по событиям, живая строка прогресса (терминал — `\r`, иначе — строка раз в `plain_every_sec`), строки развилок / задач / 429, сводка; безопасная запись (замена символов, выключение при сбое) | решение, бюджет — только читает `BudgetLedger` | calllog (подписчик), budget, console_format |
 | `harness/console_format.py` (`LineFormat`) | строки консоли из событий и чисел (разделители, подписи статусов) — без ввода-вывода | — | `config/console.json` |
 | `harness/jiuwen_logging.py` | тихий openjiuwen: его журнал только в файл, фильтр `SyntaxWarning` pysbd; импортируется до `openjiuwen.core.foundation.llm` | — | `config/console.json` |
-| `tools/` | замеры моделей, запуск в Docker или Apptainer (`docker_run`, проверка сервера стенда перед стартом), проверка сервера моделей (`probe_server`, только stdlib) и колёс lock под x86_64/aarch64 (`check_wheels`), локальная оценка ответов; калибровка модели расхода (`calibrate_cost`, данные — `cost_data`) и вероятностей (`calibrate_success`), проигрыш журналов при урезанном бюджете (`simulate_budget`, в т. ч. с политикой EMV) | работу харнесса в контейнере | — |
+| `tools/` | замеры моделей, запуск в Docker или Apptainer (`docker_run`, проверка сервера стенда перед стартом), проверка сервера моделей (`probe_server`, только stdlib) и колёс lock под x86_64/aarch64 (`check_wheels`), локальная оценка ответов; калибровка модели расхода (`calibrate_cost`, данные — `cost_data`) и вероятностей (`calibrate_success`), проигрыш журналов при урезанном бюджете (`simulate_budget`, в т. ч. с политикой EMV), парный отчёт A/B прогонов на одних задачах (`ab_report`: решено, с первой попытки, цена, форма ответа, регрессии) | работу харнесса в контейнере | — |
 | `tools/gen/` | генерация тренировочных наборов (по модулю на тип), разметка `_labels.json`, офлайн-оценка детектора, отчёт прогона | работу харнесса | `harness.feasibility` (оценка) |
 
 ## Откуда берётся контент
@@ -56,7 +58,7 @@
 не начатым задачам (`retry` | `stage2` | `stop`, резерв `high` ветки) → `Stage1Solver.retry` или `Stage2Solver` →
 `TaskPlanner.finish` (снять резерв, `CostModel.observe` по первому вызову этапа 1) →
 `ResultsWriter` (`answer.txt`, `OUT`) + `JsonlLog` (`prompt_chars`, оценки, `lambda`, `p_success`, `decisions`,
-`solved_by`, `stage2_stop`). Каждая запись журнала (`run_start`, `task_start`, `decision`, `rate_limit`, `net_retry`, `detector_error`, `task`)
+`solved_by`, `stage2_stop`). Каждая запись журнала (`run_start`, `task_start`, `decision`, `rate_limit`, `net_retry`, `detector_error`, `answer_shape`, `task`)
 сразу уходит подписчику `ConsoleView` → stderr.
 
 ## Бюджеты
