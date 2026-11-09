@@ -6,7 +6,7 @@ from typing import Any
 from harness.executor import run_script
 from harness.llm import LlmGateway
 from harness.outcome import Outcome
-from harness.patching import CODE_RE, PatchApplier, parse_blocks
+from harness.patching import CODE_RE, PatchApplier, find_patch
 from harness.prompting import Prepared, Stage1Prompt
 from harness.tasks import Task
 from harness.verifier import NO_CODE, Verdict, Verifier
@@ -53,8 +53,8 @@ class Stage1Solver:
         outcome.attempts += 1
         outcome.add_call(self._model, stage, reply)
         outcome.messages.append({"role": "assistant", "content": reply.text})
-        # правка (блоки с `# file:`) — только у типов patch_types; иной ответ — как скрипт
-        blocks = parse_blocks(reply.text) if self._prompt.is_patch(task.task_type) else None
+        # правка (блоки с `# file:` или одни функции модуля) — только у типов patch_types; иной ответ — как скрипт
+        blocks = find_patch(reply.text, task.workspace) if self._prompt.is_patch(task.task_type) else None
         if blocks:
             outcome.applied = "patch"
             return await self._verifier.check(task, self._patcher.apply(blocks, task.workspace))

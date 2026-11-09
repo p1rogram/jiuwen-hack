@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from harness.patching import PatchApplier, PatchBlock, merge_source, parse_blocks  # noqa: E402
+from harness.patching import PatchApplier, PatchBlock, find_patch, merge_source, parse_blocks  # noqa: E402
 
 # форма модуля задач: только функции по 2–5 строк (шаг 0 spec, пример coding_0003)
 ORIGINAL = (
@@ -86,6 +86,21 @@ class Rules(unittest.TestCase):
     def test_header_before_earlier_block_not_reused(self):
         reply = "# file: mylib.py\n```python\n" + FIXED_TOTAL + "```\nCheck:\n```python\nprint(1)\n```"
         self.assertEqual(len(parse_blocks(reply)), 1)
+
+    def test_headerless_functions_of_single_module_are_a_patch(self):
+        # образ 2026-11-10, coding_0003: блок из одной функции без `# file:` — как скрипт ничего не меняет
+        reply = "```python\n" + FIXED_TOTAL + "```"
+        with Workspace() as ws:
+            (ws / "test_mylib.py").write_text("import mylib\ndef total(xs):\n    pass\n")
+            self.assertEqual(find_patch(reply, ws), [PatchBlock("mylib.py", FIXED_TOTAL)])
+
+    def test_headerless_script_or_unknown_name_stays_script(self):
+        with Workspace() as ws:
+            # должно быть отклонено: есть вызовы (это скрипт) или имя не из модуля, или модулей с этим именем два
+            self.assertIsNone(find_patch("```python\n" + FIXED_TOTAL + "print(total([1]))\n```", ws))
+            self.assertIsNone(find_patch("```python\ndef area(r):\n    return r\n```", ws))
+            (ws / "other.py").write_bytes(ORIGINAL.encode())
+            self.assertIsNone(find_patch("```python\n" + FIXED_TOTAL + "```", ws))
 
     def test_missing_file_written_whole(self):
         # missing_lib: модуля нет, модель пишет его целиком

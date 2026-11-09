@@ -50,6 +50,39 @@ def parse_blocks(text: str) -> list[PatchBlock] | None:
     return blocks or None
 
 
+def find_patch(text: str, workspace: Path) -> list[PatchBlock] | None:
+    """Правка из ответа: блоки с заголовком, иначе последний блок без заголовка, если он однозначно правка модуля."""
+    found = CODE_RE.findall(text)
+    return parse_blocks(text) or guess_blocks(found[-1] if found else None, workspace)
+
+
+def guess_blocks(code: str | None, workspace: Path) -> list[PatchBlock] | None:
+    """Блок без заголовка: только функции/классы (и импорты), и все их имена есть в единственном модуле задачи
+    (не test_*.py) — это правка этого модуля. Как скрипт такой блок лишь определяет функции и файл не меняет
+    (образ 2026-11-10, coding_0003: 50 токенов впустую, задачу дорешал этап 2)."""
+    if not code:
+        return None
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
+    names = {n.name for n in tree.body if isinstance(n, DEFS)}
+    if not names or not all(isinstance(n, DEFS + IMPORTS) for n in tree.body):
+        return None
+    found = []
+    for path in sorted(workspace.glob("*.py")):
+        if path.name.startswith(("test_", "_")):
+            continue
+        try:
+            defined = {n.name for n in ast.parse(path.read_bytes().decode("utf-8", "replace")).body
+                       if isinstance(n, DEFS)}
+        except SyntaxError:
+            continue
+        if names <= defined:
+            found.append(path.name)
+    return [PatchBlock(found[0], code.strip("\n") + "\n")] if len(found) == 1 else None
+
+
 def _header(line: str) -> re.Match | None:
     return FILE_RE.fullmatch(line.strip().strip("`*").strip())
 

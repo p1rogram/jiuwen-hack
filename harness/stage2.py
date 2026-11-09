@@ -15,7 +15,7 @@ from harness.cost_model import CostModel
 from harness.executor import RunResult, run_script
 from harness.llm import LlmGateway
 from harness.outcome import Outcome
-from harness.patching import PatchApplier, parse_blocks
+from harness.patching import PatchApplier, find_patch
 from harness.prompting import Prepared, prompt_chars
 from harness.settings import load_prompt
 from harness.solver import extract_code
@@ -84,7 +84,7 @@ class Stage2Solver:
             outcome.stage2_steps = step
             messages.append({"role": "assistant", "content": reply.text})
             code, final = extract_code(reply.text), final_answer(reply.text)
-            blocks = parse_blocks(reply.text) if task.task_type in self._patch_types else None
+            blocks = find_patch(reply.text, task.workspace) if task.task_type in self._patch_types else None
             if blocks:
                 code = "\n".join(f"# file: {b.path}\n{b.source}" for b in blocks)
             if code is not None:
