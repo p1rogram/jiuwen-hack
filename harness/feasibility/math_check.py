@@ -11,6 +11,7 @@ from harness.tasks import Task
 class MathCheck:
     def __init__(self, cfg: dict[str, Any]):
         self._vague = re.compile(cfg["vague_re"])
+        self._vague_hard = re.compile(cfg["vague_hard_re"])
         self._zero = [re.compile(rx) for rx in cfg["zero_res"]]
         self._unit = re.compile(cfg["unit_re"])
 
@@ -23,7 +24,11 @@ class MathCheck:
         signals = []
         m = self._vague.search(scan)
         if m:
-            signals.append(Signal("vague_quantity", HARD, m.group(0)))
+            # hard — только слово на месте числа операции («ships some boxes», «for a few days»): «some/several/a few»
+            # в свободном тексте («a warehouse with several docks») бывает и в выполнимой задаче, а hard — это пропуск
+            hard = self._vague_hard.search(scan)
+            signals.append(Signal("vague_quantity", HARD, hard.group(0)) if hard
+                           else Signal("vague_quantity", SOFT, m.group(0)))
         for rx in self._zero:
             z = rx.search(problem)
             if z:

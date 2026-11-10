@@ -140,6 +140,50 @@ class Robustness(Base):
         self.assertEqual(len(blocking(signals, ["hard", "soft"])), 1)
 
 
+MATH_TAIL = " How many boxes does it have at the end? Compute it with the bash tool (python3 -c)."
+
+
+class Paraphrases(Base):
+    """Выполнимые задачи примеров, пересказанные свободнее шаблона: ни одного hard — ложный пропуск стоит баллов
+    задачи. Правило vague_quantity: hard — только «some/several/a few» на месте числа операции (как в генераторе:
+    «ships some boxes», «for a few days»), иначе soft. Источник — описание бага в docs/DECISIONS.md, 2026-11-10."""
+
+    FEASIBLE_MATH = [
+        "A warehouse starts with 1669 boxes. Some boxes are shipped: 36 boxes per day for 3 days. "
+        "It receives 2 deliveries of 87 boxes each.",
+        "A warehouse with several loading docks starts with 1669 boxes. It ships 36 boxes per day for 3 days.",
+        "A warehouse starts with 1669 boxes. It ships 36 boxes per day for 3 days, and a few days later it "
+        "receives 2 deliveries of 87 boxes each.",
+        "A warehouse, one of several in the region, starts with 1669 boxes. It sells 40 boxes.",
+    ]
+    VAGUE_MATH = [
+        "A warehouse starts with 1669 boxes. It ships some boxes per day for 3 days.",
+        "A warehouse starts with 1669 boxes. It ships 36 boxes per day for a few days.",
+        "A warehouse starts with 1669 boxes. It receives several deliveries of 87 boxes each.",
+        "A warehouse starts with 1669 boxes. It receives 2 deliveries of some boxes each.",
+        "A warehouse starts with 1669 boxes. It sells a few boxes.",
+        "A warehouse starts with a certain number of boxes. It sells 40 boxes.",
+    ]
+
+    def test_free_wording_with_vague_words_is_not_hard(self):
+        for i, text in enumerate(self.FEASIBLE_MATH):
+            with self.subTest(text=text):
+                self.assertEqual(codes(self.detector.check(self.math_task(i, text))), [])
+
+    def test_vague_word_in_place_of_a_number_is_hard(self):
+        for i, text in enumerate(self.VAGUE_MATH):
+            with self.subTest(text=text):
+                self.assertEqual(codes(self.detector.check(self.math_task(i, text))), ["vague_quantity"])
+
+    def test_free_vague_word_is_still_soft(self):
+        self.assertEqual(codes(self.detector.check(self.math_task(0, self.FEASIBLE_MATH[0])), "soft"), ["vague_quantity"])
+
+    def math_task(self, i: int, text: str) -> Task:
+        folder = self.tmp / f"math{i}"
+        (folder / "workspace").mkdir(parents=True, exist_ok=True)
+        return Task(f"math{i}", "math", text + MATH_TAIL, 1, "exact_int", folder)
+
+
 class GeneratedSets(Base):
     def test_no_hard_on_400_feasible_tasks(self):
         generate(self.tmp / "ok", 400, 21, 0.0, 0.5, TYPES)
