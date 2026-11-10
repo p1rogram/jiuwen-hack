@@ -52,6 +52,8 @@
     "csv_sample_rows": 5,
     "test_output_chars": 2500,
     "compact_test_output": true,
+    "trim_passing_tests": true,
+    "passing_tests_note": "# {n} passing tests omitted",
     "kb_min_files": 6,
     "kb_follow_depth": 3,
     "kb_max_files": 12,
