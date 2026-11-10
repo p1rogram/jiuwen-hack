@@ -101,6 +101,17 @@ class RailTest(unittest.TestCase):
         reply = self.ask(gateway)[0]
         self.assertAlmostEqual(ledger.spent, reply.cost)
 
+    def test_failed_attempt_with_rails_charged_once(self):
+        for broken in [False, True]:
+            with self.subTest(broken=broken):
+                gateway, ledger, rail = self.setup_agent(rail_cls=CountingRail,
+                                                        budget_rail=not broken, fail_after=broken)
+                self.srv.fail_codes = [500]
+                reply = self.ask(gateway)[0]
+                # MESSAGES: 14 символов / 2,5 с округлением = 6 токенов, цена 0,6.
+                self.assertAlmostEqual(ledger.spent, reply.cost + .6)
+                self.assertEqual((rail.before, rail.after), (1, 1))
+
     def test_exhausted_budget_stops_before_request(self):
         gateway, ledger, rail = self.setup_agent(budget=10, rail_cls=CountingRail)
         ledger.charge(10)

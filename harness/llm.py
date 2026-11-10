@@ -12,6 +12,7 @@ from typing import Any
 import harness.jiuwen_logging  # noqa: F401  — до openjiuwen: тихая консоль
 from openjiuwen.core.foundation.llm import Model, ModelClientConfig, ModelRequestConfig
 
+from harness.attempt_cost import charge_failed_attempt
 from harness.budget import BudgetLedger, TokenPricing, Usage
 from harness.calllog import JsonlLog
 from harness.model_call import BudgetExhausted, ModelCall, ModelCallHooks, admit, settle
@@ -49,8 +50,7 @@ class LlmGateway:
         self._inflight = asyncio.Semaphore(int(llm_cfg["max_inflight"]))
         self._retries = int(llm_cfg["rate_limit_retries"])
         self._wait_min, self._wait_max = llm_cfg["rate_limit_wait_sec"]
-        # обрыв соединения и 5xx: ответа нет, токены не списаны — повтор безопасен; таймаут не повторяем —
-        # сервер мог сгенерировать ответ и посчитать токены у себя (spec robustness, шаг 4)
+        # Повторяем обрыв и 5xx; вход каждой ошибки оцениваем отдельно, таймаут не повторяем.
         self._net_retries = int(llm_cfg["network_retries"])
         self._net_wait = float(llm_cfg["network_retry_wait_sec"])
         self._net_markers = tuple(llm_cfg["network_error_markers"])
@@ -71,29 +71,44 @@ class LlmGateway:
     def _is_network_error(self, error: str) -> bool:
         return any(m in error for m in self._net_markers)
 
-    async def _invoke(self, model: str, messages: list[dict[str, str]], max_tokens: int, task_id: str):
-        # 429: повтор только после времени сброса из ответа — частые повторы прокси наказывает паузой на 60 мин
-        rate_limited = net_failed = 0
+    async def _invoke(self, model: str, messages: list[dict[str, str]], max_tokens: int, call: ModelCall):
+        # 429: повтор только после времени сброса — частые повторы прокси увеличивают паузу.
+        rate_limited = net_failed = attempt = 0
         while True:
-            try:
-                async with self._inflight:
-                    return await self._model(model).invoke(messages, max_tokens=max_tokens,
-                                                           **self._extra_body(model))
-            except Exception as exc:
-                error = str(exc)
-                wait = self._rate_limit_wait(error)
-                if wait is not None and rate_limited < self._retries:
-                    rate_limited += 1
-                    self._log.write({"kind": "rate_limit", "task_id": task_id, "model": model,
-                                     "wait_sec": round(wait, 1)})
-                elif wait is None and self._is_network_error(error) and net_failed < self._net_retries:
-                    net_failed += 1
-                    wait = self._net_wait
-                    self._log.write({"kind": "net_retry", "task_id": task_id, "model": model,
-                                     "wait_sec": wait, "error": error[:300]})
-                else:
-                    raise
-                await asyncio.sleep(wait)
+            async with self._inflight:
+                client = self._model(model)
+                extra = self._extra_body(model)
+                admit(call, self._ledger)
+                attempt += 1
+                try:
+                    return await client.invoke(messages, max_tokens=max_tokens, **extra)
+                except (Exception, asyncio.CancelledError) as exc:
+                    try:
+                        charge_failed_attempt(call, attempt, self._missing_cpt,
+                                              self._pricing, self._ledger, self._log)
+                    except Exception as accounting_error:
+                        if isinstance(exc, asyncio.CancelledError):
+                            raise exc from accounting_error
+                        raise
+                    if isinstance(exc, asyncio.CancelledError):
+                        raise
+                    failure = exc
+            error = str(failure)
+            wait = self._rate_limit_wait(error)
+            if wait is not None and rate_limited < self._retries:
+                rate_limited += 1
+                self._log.write({"kind": "rate_limit", "task_id": call.task_id, "model": model,
+                                 "wait_sec": round(wait, 1)})
+            elif wait is None and self._is_network_error(error) and net_failed < self._net_retries:
+                net_failed += 1
+                wait = self._net_wait
+                self._log.write({"kind": "net_retry", "task_id": call.task_id, "model": model,
+                                 "wait_sec": wait, "error": error[:300]})
+            else:
+                raise failure
+            if self._ledger.remaining <= 0:
+                raise BudgetExhausted("budget exhausted") from failure
+            await asyncio.sleep(wait)
 
     def served_name(self, name: str) -> str:
         return self._model_map.get(name, {}).get("model", name)
@@ -144,7 +159,7 @@ class LlmGateway:
         if not call.admitted:
             admit(call, self._ledger)
         started = time.monotonic()
-        msg = await self._invoke(model, messages, max_tokens or self._cfg["max_output_tokens"], task_id)
+        msg = await self._invoke(model, messages, max_tokens or self._cfg["max_output_tokens"], call)
         latency = time.monotonic() - started
         text = msg.content if isinstance(msg.content, str) else str(msg.content or "")
         reasoning = msg.reasoning_content or ""

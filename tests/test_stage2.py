@@ -128,7 +128,9 @@ class Stage2Loop(unittest.TestCase):
 
     def test_green_tests_finish_without_final(self):
         (self.ws / "mylib.py").write_text("def f():\n    return 1\n", encoding="utf-8")
-        (self.ws / "test_mylib.py").write_text("import mylib\nassert mylib.f() == 2\n", encoding="utf-8")
+        (self.ws / "test_mylib.py").write_text(
+            "import unittest, mylib\nclass T(unittest.TestCase):\n"
+            "    def test_fixed(self): self.assertEqual(mylib.f(), 2)\n", encoding="utf-8")
         fix = "open('mylib.py', 'w').write('def f():\\n    return 2\\n')"
         failed = Verdict(False, "DONE", "`python3 test_mylib.py` still fails", "tests_fail")
         v, out, gw = self.solve([code(fix)], check="unittest", failed=failed)

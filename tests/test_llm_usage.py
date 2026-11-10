@@ -101,6 +101,9 @@ class GatewayTest(unittest.TestCase):
     def calls(self):
         return [json.loads(line) for line in self.log_path.read_text(encoding="utf-8").splitlines()]
 
+    def failed_input_cost(self):
+        return math.ceil(prompt_chars(MESSAGES) / STAND["accounting"]["missing_usage_chars_per_token"]) * STAND["accounting"]["input_weight"]
+
     def test_model_map_sends_served_name_and_extra_body(self):
         self.ask(self.gateway(STAND["model_map"]))
         body = self.srv.bodies[-1]
@@ -146,22 +149,22 @@ class GatewayTest(unittest.TestCase):
         self.assertAlmostEqual(reply.cost, 20 + math.ceil(prompt_chars(MESSAGES) / cpt) * w)
         self.assertTrue(self.calls()[-1]["usage_missing"])
 
-    def test_server_error_is_retried_without_charge(self):
-        # должно пройти (spec robustness, шаг 4): 500, затем 200 → ответ получен, списан один вызов
+    def test_server_error_is_retried_with_estimated_input_charge(self):
+        # spec api-attempt-cost: ошибка оплачивает оценку входа, успех — свой usage
         self.srv.fail_codes = [500]
         reply = self.ask(self.gateway({}))
         self.assertEqual(reply.text, CONTENT)
         self.assertEqual(len(self.srv.bodies), 2)
-        self.assertAlmostEqual(self.ledger.spent, reply.cost)
+        self.assertAlmostEqual(self.ledger.spent, reply.cost + self.failed_input_cost())
         kinds = [r["kind"] for r in self.calls()]
-        self.assertEqual(kinds, ["net_retry", "llm_call"])
+        self.assertEqual(kinds, ["llm_attempt_error", "net_retry", "llm_call"])
 
     def test_retries_are_limited(self):
         self.srv.fail_codes = [502] * 10
         with self.assertRaises(Exception):
             self.ask(self.gateway({}))
         self.assertEqual(len(self.srv.bodies), 1 + STAND["llm"]["network_retries"])
-        self.assertEqual(self.ledger.spent, 0)
+        self.assertAlmostEqual(self.ledger.spent, (1 + STAND["llm"]["network_retries"]) * self.failed_input_cost())
 
     def test_connection_refused_is_retried(self):
         self.srv.close()  # порт свободен — соединение отклоняется до ответа сервера
@@ -170,7 +173,7 @@ class GatewayTest(unittest.TestCase):
         retries = [r for r in self.calls() if r["kind"] == "net_retry"]
         self.assertEqual(len(retries), STAND["llm"]["network_retries"])
         self.assertIn("APIConnectionError", retries[0]["error"])
-        self.assertEqual(self.ledger.spent, 0)
+        self.assertAlmostEqual(self.ledger.spent, (1 + STAND["llm"]["network_retries"]) * self.failed_input_cost())
 
     def test_client_error_is_not_retried(self):
         # должно быть отклонено: 400 — ошибка запроса, повтор ничего не даст
@@ -178,7 +181,8 @@ class GatewayTest(unittest.TestCase):
         with self.assertRaises(Exception):
             self.ask(self.gateway({}))
         self.assertEqual(len(self.srv.bodies), 1)
-        self.assertEqual(self.calls() if self.log_path.exists() else [], [])
+        self.assertAlmostEqual(self.ledger.spent, self.failed_input_cost())
+        self.assertEqual([r["kind"] for r in self.calls()], ["llm_attempt_error"])
 
 
 if __name__ == "__main__":

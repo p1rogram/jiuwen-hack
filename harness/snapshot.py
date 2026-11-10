@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from harness.executor import run_python
+from harness.test_runner import run_tests
 from harness.kb_slice import kb_slice
 from harness.tasks import Task
 from harness.test_output import compact_unittest
@@ -68,10 +68,10 @@ class WorkspaceSnapshot:
         tests = [p for p in files if p.name.startswith("test_") and p.suffix == ".py" and p.parent == ws]
         out, failed = [], {}
         for test in tests[:2]:
-            res = await run_python([test.name], ws, 60)
+            res = await run_tests(ws, test.name, 60)
             raw = res.stdout + res.stderr
             tail = (compact_unittest(raw) if self._compact else raw)[-self._test_chars:]
-            out.append(f"\n--- output of `python3 {test.name}` (exit {res.returncode}) ---\n{tail}")
+            out.append(f"\n--- output of `unittest {test.name}` (exit {res.returncode}) ---\n{tail}")
             names = failed_tests(raw) if self._trim_note else None
             if names:
                 failed[test] = names

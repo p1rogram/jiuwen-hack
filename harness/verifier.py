@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from harness.executor import RunResult, run_python
+from harness.executor import RunResult
+from harness.test_runner import run_tests
 from harness.tasks import Task
 from harness.test_output import compact_unittest
 
@@ -105,11 +106,11 @@ class Verifier:
     async def _check_tests(self, ws: Path) -> Verdict:
         tests = sorted(p.name for p in ws.glob("test_*.py"))
         if not tests:
-            return Verdict(True, "DONE")
+            return Verdict(False, "", "no unittest test files found", TESTS_FAIL)
         for name in tests:
-            res = await run_python([name], ws, 120)
+            res = await run_tests(ws, name, 120)
             if not res.ok:
                 out = res.stdout + res.stderr
                 tail = (compact_unittest(out) if self._compact else out)[-self._tail:]
-                return Verdict(False, "DONE", f"`python3 {name}` still fails:\n{tail}", TESTS_FAIL)
+                return Verdict(False, "DONE", f"`unittest {name}` still fails:\n{tail}", TESTS_FAIL)
         return Verdict(True, "DONE")
