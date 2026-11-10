@@ -10,7 +10,8 @@ from harness.tasks import Task
 
 
 class SearchRules:
-    def __init__(self, cfg: dict[str, Any]):
+    def __init__(self, cfg: dict[str, Any], tail: list[re.Pattern]):
+        self._tail = tail
         self._intro = re.compile(cfg["intro"])
         self._questions = [(re.compile(q["re"]), q["chain"], q["attr"], re.compile(q["answer"]))
                            for q in cfg["questions"]]
@@ -18,7 +19,7 @@ class SearchRules:
         self._max_files = int(cfg["max_files"])
 
     def solve(self, task: Task) -> str | None:
-        parts = split_question(task.instruction)
+        parts = split_question(task.instruction, self._tail)
         if parts is None or len(parts[0]) != 1:
             return None
         intro = self._intro.match(parts[0][0])

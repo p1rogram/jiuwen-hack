@@ -288,6 +288,88 @@ class HardRuleParaphrases(Base):
                 self.assert_no_hard(self.task_at(f"m{i}", "math", text + MATH_TAIL, {}))
 
 
+class AuditFalseHards(Base):
+    """Аудит edc1c14, A2–A6: входы ревью, на которых детектор ставил hard (пропуск), хотя задача выполнима по
+    построению — ответ есть в файлах. Рядом — близкие случаи, которые обязаны остаться hard (генератор)."""
+
+    task_at = HardRuleParaphrases.task_at
+    assert_no_hard = HardRuleParaphrases.assert_no_hard
+
+    ANSWER_TAIL = (" Work only inside the current directory. When you are done, write ONLY the final numeric answer to "
+                   "the file final_result.txt in the current directory.")
+
+    def test_file_mentioned_not_as_input_is_not_hard(self):
+        base = "The file sales.csv has columns order_id,region,product,month,units,price. " + DATA_Q
+        cases = [
+            ("go_to", base + " The results should go to results.csv as well."),
+            ("name_file", base + " Then name that file result.txt."),
+            ("not_provided", base + " Do not use pandas (no requirements.txt is provided)."),
+            ("long_answer_tail", base + self.ANSWER_TAIL),
+        ]
+        for name, text in cases:
+            with self.subTest(name):
+                self.assert_no_hard(self.task_at(name, "data_analysis", text, {"sales.csv": SALES}))
+
+    def test_slash_word_is_not_a_directory(self):
+        text = "A warehouse starts with 100 boxes. It sells 40 boxes." + MATH_TAIL + " Compute it w/ python3."
+        self.assert_no_hard(self.task_at("w_slash", "math", text, {}))
+
+    def test_input_file_or_kb_dir_absent_stays_hard(self):
+        # должно быть отклонено как невыполнимое: файл и папка названы входом и их нет (виды генератора)
+        data = self.task_at("no_csv", "data_analysis", DATA_INSTRUCTION, {})
+        self.assertEqual(codes(self.detector.check(data)), ["missing_file"])
+        search = self.task_at("no_kb", "search", SEARCH_INTRO + "In which year was Irina Smith born?" + SEARCH_TAIL, {})
+        self.assertEqual(codes(self.detector.check(search)), ["missing_dir"])
+
+    def coding(self, name: str, body: str, lib: str = "def evens(n):\n    return list(range(0, n, 2))\n") -> Task:
+        tests = ("import unittest\nfrom unittest import mock\n\nimport mylib\n\n\nclass T(unittest.TestCase):\n"
+                 + body)
+        return self.task_at(name, "coding", CODING_INSTRUCTION, {"mylib.py": lib, "test_mylib.py": tests})
+
+    def test_compatible_or_conditional_expectations_are_not_hard(self):
+        push_lib = "_items = []\n\n\ndef push(x):\n    _items.append(x)\n    return len(_items)\n"
+        cases = [
+            ("truthy", "    def test_a(self):\n        self.assertTrue(mylib.evens(4))\n"
+                       "        self.assertEqual(mylib.evens(4), [0, 2])\n", None),
+            ("stateful", "    def test_a(self):\n        self.assertEqual(mylib.push(1), 1)\n"
+                         "        self.assertEqual(mylib.push(1), 2)\n", push_lib),
+            ("expected_failure", "    def test_a(self):\n        self.assertEqual(mylib.evens(4), [0, 2])\n\n"
+                                 "    @unittest.expectedFailure\n    def test_b(self):\n"
+                                 "        self.assertEqual(mylib.evens(4), [0])\n", None),
+            ("patched", "    def test_a(self):\n        self.assertEqual(mylib.evens(4), [0, 2])\n\n"
+                        "    def test_b(self):\n        with mock.patch.object(mylib, 'STEP', 4):\n"
+                        "            self.assertEqual(mylib.evens(4), [0])\n", None),
+        ]
+        for name, body, lib in cases:
+            with self.subTest(name):
+                self.assert_no_hard(self.coding(name, body, *([lib] if lib else [])))
+
+    def test_pure_call_two_answers_in_different_methods_stays_hard(self):
+        # должно быть отклонено: вид генератора — один вызов чистой функции, два разных значения
+        body = ("    def test_a(self):\n        self.assertEqual(mylib.evens(4), [0, 2])\n\n"
+                "    def test_b(self):\n        self.assertEqual(mylib.evens(4), [0, 2, 4])\n")
+        self.assertEqual(codes(self.detector.check(self.coding("clash", body))), ["contradictory_tests"])
+
+    def test_reverse_relation_question_is_not_hard(self):
+        kb = dict(KB)
+        kb["kb/person_chen_wang.md"] = "# Chen Wang\n\nBorn: 1950\nEmployer: Bluefin Systems\n"
+        kb["kb/person_irina_smith.md"] = KB["kb/person_irina_smith.md"].replace("Sergei Garcia", "Chen Wang")
+        text = SEARCH_INTRO + "Which person has Chen Wang as a mentor?" + SEARCH_TAIL
+        self.assert_no_hard(self.task_at("reverse", "search", text, kb))
+
+    def test_direct_missing_field_stays_hard(self):
+        # должно быть отклонено: у Irina Smith нет Born, у других людей есть — вид генератора missing_field
+        kb = dict(KB)
+        kb["kb/person_irina_smith.md"] = KB["kb/person_irina_smith.md"].replace("Born: 1975\n", "")
+        text = SEARCH_INTRO + "In which year was Irina Smith born?" + SEARCH_TAIL
+        self.assertEqual(codes(self.detector.check(self.task_at("no_born", "search", text, kb))), ["missing_field"])
+
+    def test_csv_without_header_is_not_hard(self):
+        body = "1,west,widget,7,5,10\n2,east,gadget,8,4,20\n"
+        text = "The file sales.csv has columns order_id,region,product,month,units,price. " + DATA_Q
+        self.assert_no_hard(self.task_at("headerless", "data_analysis", text, {"sales.csv": body}))
+
+
 class GeneratedSets(Base):
     def test_no_hard_on_400_feasible_tasks(self):
         generate(self.tmp / "ok", 400, 21, 0.0, 0.5, TYPES)

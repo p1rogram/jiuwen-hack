@@ -38,9 +38,12 @@ def parse_reward(value: object) -> float:
 def load_tasks(tasks_dir: Path) -> list[Task]:
     """Битый task.json пропускается со строкой в stderr: одна задача не должна сорвать загрузку остальных."""
     tasks = []
-    for task_json in sorted(tasks_dir.glob("*/task.json")):
+    # задачи на уровень глубже (`tasks/task-dir/<id>/task.json`, как в архиве примеров) — иначе 0 задач без ошибки
+    found = sorted(tasks_dir.glob("*/task.json")) or sorted(tasks_dir.glob("*/*/task.json"))
+    for task_json in found:
         try:
-            data = json.loads(task_json.read_text(encoding="utf-8"))
+            # utf-8-sig: task.json, сохранённый в Windows с BOM, иначе не читается
+            data = json.loads(task_json.read_text(encoding="utf-8-sig"))
             if not isinstance(data, dict):
                 raise ValueError("not a JSON object")
         except (OSError, ValueError) as exc:

@@ -23,13 +23,14 @@ def apply(op: str, stock: int, a: int, b: int) -> int | None:
 
 
 class MathRules:
-    def __init__(self, cfg: dict[str, Any]):
+    def __init__(self, cfg: dict[str, Any], tail: list[re.Pattern]):
+        self._tail = tail
         self._start = re.compile(cfg["start"])
         self._ops = cfg["ops"]
         self._question = cfg["question"]
 
     def solve(self, task: Task) -> str | None:
-        parts = split_question(task.instruction)
+        parts = split_question(task.instruction, self._tail)
         if parts is None:
             return None
         before, question = parts

@@ -3,8 +3,12 @@
     "extensions": ["py", "csv", "tsv", "json", "txt", "md", "xlsx", "yaml", "yml", "db", "sqlite"],
     "ignore": ["answer.txt"],
     "output_verbs": ["write", "create", "save", "produce", "output", "generate", "store", "put", "place", "dump", "export", "append", "record", "report"],
-    "output_window_chars": 40,
-    "soft_extensions": ["py"]
+    "output_window_chars": 120,
+    "soft_extensions": ["py"],
+    "input_before_re": "(?:\\b(?:the|this|a|an)\\s+(?:csv\\s+|data\\s+|input\\s+)?file|\\b(?:in|from|read|reads|reading|open|opens|load|loads|parse|parses|inside|using)(?:\\s+the)?)\\s+`?$",
+    "input_after_re": "^`?\\s+(?:has|have|contains|contain|lists|holds|stores|is in|with columns)\\b",
+    "dir_before_re": "\\b(?:directory|folder|dir|in|inside|under|from)\\s+(?:the\\s+)?`?$",
+    "dir_after_re": "^`?\\s+(?:contains|has|holds|lists|is a)\\b"
   },
   "data": {
     "columns_declared_re": "columns\\s+([A-Za-z_][\\w]*(?:\\s*,\\s*[A-Za-z_][\\w]*)+)",

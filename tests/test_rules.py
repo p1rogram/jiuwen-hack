@@ -184,6 +184,34 @@ class SearchRules(Base):
                 self.assertIsNone(self.solve("search", SEARCH_INTRO + q + SEARCH_TOOL, KB))
 
 
+class TextAfterQuestion(Base):
+    """Аудит edc1c14, A1: предложение после вопроса, которого нет среди служебных, может менять ответ — этап 0
+    отдаёт задачу LLM. Ожидание: условие меняет ответ (85 → 105, «modulo 7», регион), значит шаблонный ответ неверен."""
+
+    def test_extra_sentence_after_question_rejected(self):
+        math = "A warehouse starts with 100 boxes. It sells 15 boxes. How many boxes does it have at the end?"
+        data = DATA_INTRO.format(n=4) + "How many units of product 'widget' were sold in months 7 through 9 inclusive?"
+        search = SEARCH_INTRO + "In which year was Irina Smith born?"
+        cases = [
+            ("math", math + " Then it receives 2 deliveries of 10 boxes each." + TAIL, None),
+            ("math", math + " Report the answer modulo 7." + TAIL, None),
+            ("data_analysis", data + " Count only the region 'east'." + DATA_TOOL, {"sales.csv": SALES}),
+            ("search", search + " Answer with the last two digits only." + SEARCH_TOOL, KB),
+            ("math", math + " Compute it with the bash tool (python3 -c). Work only inside the current directory. "
+                            "When you are done, write ONLY the final answer to the file result.txt.", None),
+        ]
+        for ttype, text, files in cases:
+            with self.subTest(text[-60:]):
+                self.assertIsNone(self.solve(ttype, text, files))
+
+    def test_service_tail_with_or_without_example_accepted(self):
+        math = "A warehouse starts with 100 boxes. It sells 15 boxes. How many boxes does it have at the end?"
+        self.assertEqual(self.solve("math", math + " Compute it with the bash tool (python3 -c)." + TAIL), "85")
+        short = (" Work only inside the current directory. When you are done, write ONLY the final answer to the "
+                 "file answer.txt in the current directory.")
+        self.assertEqual(self.solve("math", math + short), "85")
+
+
 class FakeWriter:
     def __init__(self):
         self.written = {}

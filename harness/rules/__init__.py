@@ -1,6 +1,7 @@
 """Этап 0 без LLM: задача, условие которой целиком разобрано по шаблону, решается кодом; иначе — None и обычный путь."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from harness.rules.data_rules import DataRules
@@ -12,8 +13,9 @@ from harness.tasks import Task
 
 class RulesSolver:
     def __init__(self, cfg: dict[str, Any]):
-        self._by_type = {"math": MathRules(cfg["math"]), "data_analysis": DataRules(cfg["data"]),
-                         "search": SearchRules(cfg["search"])}
+        tail = [re.compile(t) for t in cfg["tail"]]
+        self._by_type = {"math": MathRules(cfg["math"], tail), "data_analysis": DataRules(cfg["data"], tail),
+                         "search": SearchRules(cfg["search"], tail)}
         self._soft_ok = set(cfg["soft_ok"])
 
     def accepts(self, signals: list[Signal]) -> bool:

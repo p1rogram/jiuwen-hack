@@ -31,11 +31,14 @@ class DataCheck:
             return signals
         declared = self._declared(task.instruction)
         q = question.lower()
+        # в первой строке нет ни одного объявленного столбца — это строка данных, а не шапка: CSV без заголовка
+        # решается по позициям из условия, отсутствие столбца не доказано
+        headerless = bool(declared) and not declared & set(header)
         for col, triggers in self._triggers.items():
             if col in header or not any(t in q for t in triggers):
                 continue
             # жёстко только если инструкция сама обещает этот столбец, а в файле его нет
-            severity = HARD if col in declared else SOFT
+            severity = HARD if col in declared and not headerless else SOFT
             signals.append(Signal("missing_column", severity, f"{files[0].name} has no column {col!r}"))
         for col, rx in self._filters.items():
             m = rx.search(question)

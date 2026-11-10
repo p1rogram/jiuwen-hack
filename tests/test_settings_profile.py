@@ -1,6 +1,8 @@
 """Профиль стенда поверх config/harness.json (spec spark-build, критерий «профиль»)."""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -99,17 +101,39 @@ class ApiKeyTest(unittest.TestCase):
         with clean_env():
             s = settings.load_settings(profile="stand")
         self.assertEqual(s.api_key, settings.NO_KEY_PLACEHOLDER)
+        self.assertTrue(s.llm_ready)  # стенд без ключа (vLLM) — LLM доступна
         self.assertEqual(s.base_url, "http://127.0.0.1:22500/v1")
         self.assertEqual(s.profile, "stand")
 
-    def test_no_profile_without_key_still_fails(self):
-        with clean_env(), self.assertRaises(SystemExit):
-            settings.load_settings()
+    def test_no_profile_without_key_starts_without_llm(self):
+        # аудит edc1c14, A10 (было: SystemExit): без ключа этап 0 всё равно отвечает — запуск идёт, ключ — заглушка, llm_ready False,
+        # харнесс пропускает задачи для LLM (run_agent: llm_ready); имя переменной — в stderr
+        err = io.StringIO()
+        with clean_env(), contextlib.redirect_stderr(err):
+            s = settings.load_settings()
+        self.assertFalse(s.llm_ready)
+        self.assertEqual(s.api_key, settings.NO_KEY_PLACEHOLDER)
+        self.assertIn("API key not found", err.getvalue())
 
     def test_real_key_wins_over_placeholder(self):
         with clean_env(LLM_API_KEY="laika-key"):
             s = settings.load_settings(profile="stand")
         self.assertEqual(s.api_key, "laika-key")
+
+
+class BudgetEnvTest(unittest.TestCase):
+    """Аудит edc1c14, A9: BUDGET в окружении в любом привычном виде; неразборчивое — умолчание, а не падение."""
+
+    def test_common_spellings(self):
+        for raw in ("100000", "100 000", "100_000", "100,000", "100k", "100K", " 100000 "):
+            with self.subTest(raw):
+                self.assertEqual(settings.parse_budget(raw, 5.0), 100_000.0)
+
+    def test_garbage_falls_back_to_default(self):
+        for raw in ("lots", "-5", "0", "nan", "inf"):
+            with self.subTest(raw), contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(settings.parse_budget(raw, 5.0), 5.0)
+                self.assertIn("BUDGET", err.getvalue())
 
 
 if __name__ == "__main__":

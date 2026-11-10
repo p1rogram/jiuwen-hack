@@ -138,5 +138,31 @@ class DetectorFailure(unittest.TestCase):
         self.assertIn("prompt boom", recs[0]["error"])
 
 
+class BrokenPlanner(TaskPlanner):
+    def admit(self, prepared):
+        if prepared.task.task_id == "t0":
+            raise RuntimeError("admit boom")
+        return super().admit(prepared)
+
+
+class PhaseBFailures(unittest.TestCase):
+    """Аудит edc1c14, A10–A11: без ключа API и при сбое планировщика одной задачи остальные не теряются."""
+
+    def test_admit_error_stays_with_its_task(self):
+        # должно пройти: исключение в admit у t0 → error только у неё, t1 и t2 решены
+        h = harness(10_000, 100, {"t": stats(100)})
+        h.planner = BrokenPlanner(h.planner._model, h.ledger, h.policy.priority)
+        recs = {r["task_id"]: r["status"] for r in asyncio.run(h.run(tasks(3)))}
+        self.assertEqual(recs, {"t0": "error", "t1": "verified", "t2": "verified"})
+
+    def test_without_key_llm_tasks_skipped_without_calls(self):
+        # должно быть отклонено: без ключа к LLM не обращаемся — задача skipped_no_key, бюджет не тронут
+        h = harness(10_000, 100, {"t": stats(100)})
+        h.llm_ready = False
+        recs = asyncio.run(h.run(tasks(2)))
+        self.assertEqual([r["status"] for r in recs], ["skipped_no_key"] * 2)
+        self.assertEqual(h.ledger.spent, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,6 +29,7 @@ class Settings:
     log_dir: Path
     budget: float
     profile: str | None = None
+    llm_ready: bool = True  # ключ API найден; иначе api_key — заглушка и отвечает только этап 0
 
     def section(self, name: str) -> dict[str, Any]:
         return self.raw[name]
@@ -88,6 +91,23 @@ def load_settings_raw(profile: str | None = None) -> dict[str, Any]:
     return raw
 
 
+def parse_budget(value: str | None, default: float) -> float:
+    """BUDGET из окружения: «100000», «100 000», «100_000», «100k»; не разобралось — умолчание со строкой в stderr
+    (падение до старта стоило бы всех задач)."""
+    if not value:
+        return default
+    text = value.strip().lower().replace(" ", "").replace("_", "").replace(",", "")
+    scale = 1000.0 if text.endswith("k") else 1.0
+    try:
+        result = float(text.removesuffix("k")) * scale
+    except ValueError:
+        result = -1.0
+    if not math.isfinite(result) or result <= 0:
+        print(f"BUDGET={value!r} not understood, using {default:g}", file=sys.stderr)
+        return default
+    return result
+
+
 def load_settings(budget: float | None = None, out: str | None = None, profile: str | None = None) -> Settings:
     """profile: имя из config/profiles; None — из env HARNESS_PROFILE, пусто — без профиля."""
     name = resolve_profile(profile)
@@ -97,17 +117,22 @@ def load_settings(budget: float | None = None, out: str | None = None, profile: 
     api_key = _find_key(raw["api_key_env_names"], dotenv)
     if not api_key and raw["api_key_optional"]:
         api_key = NO_KEY_PLACEHOLDER
+    llm_ready = bool(api_key)
     if not api_key:
+        # без ключа этап 0 (math/data/search по шаблону) всё равно отвечает; задачи для LLM харнесс пропустит.
+        # Заглушка, а не пустая строка: клиент openjiuwen без api_key не создаётся
+        api_key = NO_KEY_PLACEHOLDER
         names = sorted(dotenv)  # только имена, без значений
         state = f".env has vars: {names}" if (ROOT / ".env").exists() else ".env not found"
-        raise SystemExit(f"API key not found in env {raw['api_key_env_names']}; {state}")
+        print(f"API key not found in env {raw['api_key_env_names']}; {state}; LLM tasks will be skipped",
+              file=sys.stderr)
     out_value = out or os.environ.get("OUT")
     log_dir = Path(os.environ.get("HARNESS_LOG_DIR") or (ROOT / raw["log_dir_default"]))
     env_budget = os.environ.get("BUDGET") or os.environ.get("TOKEN_BUDGET")
-    final_budget = budget if budget is not None else float(env_budget or raw["budget_default"])
+    final_budget = budget if budget is not None else parse_budget(env_budget, float(raw["budget_default"]))
     return Settings(raw=raw, base_url=base_url.rstrip("/"), api_key=api_key,
                     out_path=Path(out_value) if out_value else None,
-                    log_dir=log_dir, budget=final_budget, profile=name)
+                    log_dir=log_dir, budget=final_budget, profile=name, llm_ready=llm_ready)
 
 
 def load_config(name: str) -> dict[str, Any]:

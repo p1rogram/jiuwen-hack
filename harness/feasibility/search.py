@@ -106,7 +106,16 @@ class SearchCheck:
         steps = self._steps(q, start, start + len(entity))
         if not steps:
             return Resolution(None, [])
+        if not self._anchored(q, entity, steps[0][0]):
+            # «Which person has Chen Wang as a mentor?» — отношение не от этого имени: путь по карточкам ничего не доказывает
+            return Resolution(None, [])
         return self._walk(kb, entity, steps)
+
+    @staticmethod
+    def _anchored(q: str, entity: str, kw: str) -> bool:
+        """Первый шаг цепочки прямо привязан к имени: «X's kw», «kw of X», «X (was|is) kw» (was Irina Smith born)."""
+        e, k = re.escape(entity), re.escape(kw)
+        return bool(re.search(rf"{e}'s {k}\b|\b{k} of (?:the )?{e}(?!\w)|{e} (?:was |is |were )?{k}\b", q))
 
     @staticmethod
     def _find_entity(kb: KnowledgeBase, q: str) -> str | None:

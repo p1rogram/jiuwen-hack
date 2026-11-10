@@ -1,5 +1,12 @@
 {
   "soft_ok": ["bad_months", "unknown_value"],
+  "tail": [
+    "^Compute it with the bash tool \\(python3 -c\\)\\.$",
+    "^Use bash with python3 to compute it\\.$",
+    "^Use the file tools or bash \\(ls, grep, cat\\) to find it\\.$",
+    "^Work only inside the current directory\\.$",
+    "^When you are done, write ONLY the final answer to the file answer\\.txt in the current directory(?: \\(for example with bash: echo \\d+ > answer\\.txt\\))?\\.$"
+  ],
   "math": {
     "start": "^A warehouse starts with (?P<n>\\d+) (?P<unit>[a-z]+)\\.$",
     "ops": [

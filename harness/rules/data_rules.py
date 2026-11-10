@@ -11,7 +11,8 @@ from harness.tasks import Task
 
 
 class DataRules:
-    def __init__(self, cfg: dict[str, Any]):
+    def __init__(self, cfg: dict[str, Any], tail: list[re.Pattern]):
+        self._tail = tail
         self._intro = re.compile(cfg["intro"])
         self._questions = [(re.compile(q["re"]), q["sum"]) for q in cfg["questions"]]
         self._month = cfg["month_column"]
@@ -19,7 +20,7 @@ class DataRules:
         self._alias_cutoff = cfg["alias_cutoff"]
 
     def solve(self, task: Task) -> str | None:
-        parts = split_question(task.instruction)
+        parts = split_question(task.instruction, self._tail)
         if parts is None or len(parts[0]) != 1:
             return None
         intro = self._intro.match(parts[0][0])

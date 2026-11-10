@@ -60,6 +60,21 @@ class LoadTasks(unittest.TestCase):
         self.assertEqual(tasks["zero"].reward, 0.0)
         self.assertEqual(tasks["three"].reward, 3.0)
 
+    def test_task_json_with_bom_is_loaded(self):
+        # аудит edc1c14, A7: файл из Windows-редактора с BOM — обычная задача, а не битый JSON
+        self.put("bom", "﻿".encode() + json.dumps({"task_id": "bom", "task_type": "math"}).encode())
+        tasks, err = self.load()
+        self.assertEqual(list(tasks), ["bom"])
+        self.assertEqual(err, "")
+
+    def test_tasks_one_level_deeper_are_found(self):
+        # аудит edc1c14, A8: раскладка архива примеров `<dir>/task-dir/<id>/task.json` — не 0 задач
+        for name in ("a", "b"):
+            (self.root / "task-dir" / name).mkdir(parents=True)
+            (self.root / "task-dir" / name / "task.json").write_text(json.dumps({"task_id": name}), encoding="utf-8")
+        tasks, _ = self.load()
+        self.assertEqual(sorted(tasks), ["a", "b"])
+
 
 if __name__ == "__main__":
     unittest.main()

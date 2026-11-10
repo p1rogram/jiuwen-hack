@@ -52,6 +52,7 @@ def parse_args() -> argparse.Namespace:
 class Harness:
     profile: str | None = None  # профиль стенда для run_start; тесты собирают Harness без __init__
     rules: RulesSolver | None = None
+    llm_ready = True  # ключ API есть; без него отвечает только этап 0
 
     def __init__(self, settings: Settings, model: str | None, force_stage2: bool = False,
                  force_branch: str | None = None):
@@ -89,6 +90,7 @@ class Harness:
         self.skip_severities = feas["skip_severities"]
         rules = settings.section("rules")
         self.rules = RulesSolver(load_config(rules["config_file"])) if rules["enabled"] else None
+        self.llm_ready = settings.llm_ready
 
     async def run(self, tasks: list[Task]) -> list[dict]:
         self.log.write({"kind": "run_start", "tasks": len(tasks), "budget": self.ledger.total,
@@ -103,6 +105,9 @@ class Harness:
         staged = await asyncio.gather(*(limited(self._prepare(t)) for t in tasks))
         skipped = [s for s in staged if isinstance(s, dict)]
         prepared = self.planner.order([s for s in staged if isinstance(s, Prepared)])
+        if not self.llm_ready:
+            return skipped + [self._record({"task_id": p.task.task_id, "type": p.task.task_type, "reward": p.task.reward,
+                                            "status": "skipped_no_key"}) for p in prepared]
         self.pending = {p.task.task_id: p for p in prepared}
         # soft-задача, чья ожидаемая выгода меньше цены её токенов при текущем λ, — не начинаем вовсе
         lam = self.lam()
@@ -156,6 +161,14 @@ class Harness:
 
     async def _solve_one(self, prepared: Prepared, final: bool) -> dict | None:
         """None — не поместилась и final=False: задача отложена до второго прохода."""
+        try:
+            return await self._solve_admitted(prepared, final)
+        except Exception as exc:  # сбой планировщика или журнала вне решения — иначе gather оборвёт фазу B для всех
+            self.pending.pop(prepared.task.task_id, None)
+            return self._record({"task_id": prepared.task.task_id, "type": prepared.task.task_type,
+                                 "status": "error", "error": f"admit {type(exc).__name__}: {exc}"[:500]})
+
+    async def _solve_admitted(self, prepared: Prepared, final: bool) -> dict | None:
         task = prepared.task
         head = {"task_id": task.task_id, "type": task.task_type, "reward": task.reward,
                 "prompt_chars": prepared.prompt_chars}
