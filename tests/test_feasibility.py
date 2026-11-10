@@ -184,6 +184,110 @@ class Paraphrases(Base):
         return Task(f"math{i}", "math", text + MATH_TAIL, 1, "exact_int", folder)
 
 
+KB = {
+    "kb/company_arktika_labs.md": "# Arktika Labs\n\nHeadquarters: Osaka\nFounded: 1990\n",
+    "kb/company_bluefin_systems.md": "# Bluefin Systems\n\nHeadquarters: Lima\nFounded: 2001\n",
+    "kb/person_irina_smith.md": "# Irina Smith\n\nBorn: 1975\nEmployer: Arktika Labs\nMentor: Sergei Garcia\n",
+    "kb/person_sergei_garcia.md": "# Sergei Garcia\n\nBorn: 1960\nEmployer: Bluefin Systems\nMentor: Irina Smith\n",
+}
+SEARCH_INTRO = "The directory kb/ contains a small knowledge base of markdown files. "
+SEARCH_TAIL = " Use the file tools or bash (ls, grep, cat) to find it."
+DATA_Q = ("How many units of product 'widget' were sold in months 7 through 8 inclusive? "
+          "Use bash with python3 to compute it.")
+SALES = "order_id,region,product,month,units,price\n1,west,widget,7,5,10\n2,east,gadget,8,4,20\n"
+
+
+class HardRuleParaphrases(Base):
+    """Выполнимые задачи, пересказанные или оформленные иначе, чем в генераторе: ни одного hard (hard — пропуск
+    задачи, ложный стоит её баллов). Ожидание «выполнима» — по построению: ответ есть в файлах задачи."""
+
+    def task_at(self, name: str, ttype: str, instruction: str, files: dict[str, str | bytes]) -> Task:
+        folder = self.tmp / name
+        ws = folder / "workspace"
+        ws.mkdir(parents=True)
+        for rel, body in files.items():
+            (ws / rel).parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(body, bytes):
+                (ws / rel).write_bytes(body)
+            else:
+                (ws / rel).write_text(body, encoding="utf-8")
+        return Task(name, ttype, instruction, 1, "x", folder)
+
+    def assert_no_hard(self, task: Task):
+        self.assertEqual(codes(self.detector.check(task)), [], task.instruction)
+
+    def test_files_nested_or_written_with_other_verbs(self):
+        cases = [
+            ("nested_csv", "data_analysis", "The directory data/ contains sales.csv with columns "
+             "order_id,region,product,month,units,price. " + DATA_Q, {"data/sales.csv": SALES}),
+            ("put_verb", "data_analysis", "The file sales.csv has columns order_id,region,product,month,units,price. "
+             + DATA_Q + " Put ONLY the final answer into the file result.txt.", {"sales.csv": SALES}),
+            ("nested_dir", "search", "The folder project/ holds a knowledge base in kb/. "
+             "In which year was Irina Smith born?" + SEARCH_TAIL, {f"project/{k}": v for k, v in KB.items()}),
+        ]
+        for name, ttype, text, files in cases:
+            with self.subTest(name):
+                self.assert_no_hard(self.task_at(name, ttype, text, files))
+
+    def test_data_csv_dialects(self):
+        semicolon = SALES.replace(",", ";")
+        bom_month_first = "﻿month,units,product,region,order_id,price\n7,5,widget,west,1,10\n"
+        cases = [
+            ("semicolon", "The file sales.csv has columns order_id,region,product,month,units,price. " + DATA_Q,
+             semicolon),
+            ("bom", "The file sales.csv has columns month,units,product,region,order_id,price. " + DATA_Q,
+             bom_month_first),
+        ]
+        for name, text, body in cases:
+            with self.subTest(name):
+                self.assert_no_hard(self.task_at(name, "data_analysis", text, {"sales.csv": body.encode("utf-8")}))
+
+    def test_search_free_wording_and_kb_formats(self):
+        linked = dict(KB)
+        linked["kb/person_irina_smith.md"] = KB["kb/person_irina_smith.md"].replace(
+            "Employer: Arktika Labs", "Employer: [Arktika Labs](company_arktika_labs.md)")
+        wiki = dict(KB)
+        wiki["kb/person_irina_smith.md"] = KB["kb/person_irina_smith.md"].replace(
+            "Employer: Arktika Labs", "Employer: [[Arktika Labs]]")
+        suffixed = dict(KB)
+        suffixed["kb/person_irina_smith.md"] = KB["kb/person_irina_smith.md"].replace(
+            "Employer: Arktika Labs", "Employer: Arktika Labs Inc.")
+        hq = "In which city is the headquarters of Irina Smith's employer?"
+        cases = [
+            ("capitalized_phrase", "Which company in the Knowledge Base has its headquarters in Osaka?", KB),
+            ("unknown_relation_word", "In which year was Irina Smith's company established?", KB),
+            ("md_link", hq, linked),
+            ("wikilink", hq, wiki),
+            ("name_suffix", hq, suffixed),
+        ]
+        for name, question, kb in cases:
+            with self.subTest(name):
+                self.assert_no_hard(self.task_at(name, "search", SEARCH_INTRO + question + SEARCH_TAIL, kb))
+
+    def test_coding_state_between_calls_is_not_contradiction(self):
+        lib = ("class Counter:\n    def __init__(self):\n        self.n = 0\n\n    def next(self):\n"
+               "        self.n += 1\n        return self.n\n\n\ndef push(xs, x):\n    xs.append(x)\n\n\n"
+               "def size(xs):\n    return len(xs)\n")
+        tests = ("import unittest\n\nimport mylib as m\n\n\nclass T(unittest.TestCase):\n"
+                 "    def test_counter(self):\n        c = m.Counter()\n"
+                 "        self.assertEqual(c.next(), 1)\n        self.assertEqual(c.next(), 2)\n\n"
+                 "    def test_stack(self):\n        xs = []\n        m.push(xs, 1)\n"
+                 "        self.assertEqual(m.size(xs), 1)\n        m.push(xs, 2)\n"
+                 "        self.assertEqual(m.size(xs), 2)\n")
+        task = self.task_at("stateful", "coding", CODING_INSTRUCTION, {"mylib.py": lib, "test_mylib.py": tests})
+        self.assert_no_hard(task)
+
+    def test_math_zero_that_is_not_a_divisor(self):
+        cases = [
+            "A warehouse starts with 1669 boxes. Its loading rate, divided by 0.5, is not needed here. It sells 40 boxes.",
+            "A warehouse starts with 1669 boxes. Each pallet holds between 0 and 12 boxes. It sells 40 boxes.",
+            "A warehouse starts with 1669 boxes. A truck splits its load into 0.5-ton crates. It sells 40 boxes.",
+        ]
+        for i, text in enumerate(cases):
+            with self.subTest(text):
+                self.assert_no_hard(self.task_at(f"m{i}", "math", text + MATH_TAIL, {}))
+
+
 class GeneratedSets(Base):
     def test_no_hard_on_400_feasible_tasks(self):
         generate(self.tmp / "ok", 400, 21, 0.0, 0.5, TYPES)

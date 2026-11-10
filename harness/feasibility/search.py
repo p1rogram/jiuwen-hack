@@ -23,8 +23,15 @@ class KnowledgeBase:
     text: str = ""          # всё содержимое + имена файлов, lower
     file_keys: set[str] = field(default_factory=set)
 
-    def has_label(self, labels: list[str]) -> bool:
-        return any(lab in card for card in self.cards.values() for lab in labels)
+    def peer_has_label(self, card: dict[str, str], labels: list[str]) -> bool:
+        """Поле есть у карточки того же рода (общее другое поле): у компании нет «born» не потому, что его стёрли,
+        а потому, что вопрос разобран не так («Irina Smith's company established» — company не отношение)."""
+        own = set(card) - set(labels)
+        return any(own & set(other) for other in self.cards.values() if any(lab in other for lab in labels))
+
+    def overlapping(self, value: str) -> list[str]:
+        return [n for n in self.cards if re.search(rf"(?<!\w){re.escape(n)}(?!\w)", value)
+                or re.search(rf"(?<!\w){re.escape(value)}(?!\w)", n)]
 
     def mentions(self, name: str) -> bool:
         n = name.lower()
@@ -35,6 +42,15 @@ class KnowledgeBase:
 class Resolution:
     answer: str | None
     signals: list[Signal]
+
+
+MD_LINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]|\[([^\]]+)\]\([^)]*\)")
+
+
+def clean_value(value: str) -> str:
+    """Значение поля без разметки: [Name](file.md), [[Name]], **Name**, точка в конце."""
+    value = MD_LINK_RE.sub(lambda m: m.group(1) or m.group(2), value)
+    return value.strip().strip("*_`").strip().rstrip(".;,").strip()
 
 
 def load_kb(files: list[Path]) -> KnowledgeBase:
@@ -79,7 +95,10 @@ class SearchCheck:
         q = question.lower()
         entity = self._find_entity(kb, q)
         if entity is None:
-            unknown = [n for n in self._capitalized(question) if not kb.mentions(n)]
+            # имя из того же словаря, что и карточки (общее имя или фамилия); «Knowledge Base» в вопросе — не сущность
+            words = {w for name in kb.cards for w in name.split()}
+            unknown = [n for n in self._capitalized(question)
+                       if not kb.mentions(n) and words & set(n.lower().split())]
             if unknown:
                 return Resolution(None, [Signal("unknown_entity", HARD, f"{unknown[0]!r} is not in kb")])
             return Resolution(None, [])
@@ -127,13 +146,20 @@ class SearchCheck:
             card = kb.cards[cur]
             value = next((card[lab] for lab in labels if lab in card), None)
             if value is None:
-                if kb.has_label(labels):
+                if kb.peer_has_label(card, labels):
                     return Resolution(None, [Signal("missing_field", HARD, f"{cur!r} has no {kw!r}")])
                 return Resolution(None, [])
+            value = clean_value(value)
             if i == len(steps) - 1:
                 return Resolution(value, [])
             nxt = value.lower()
             if nxt not in kb.cards:
+                near = kb.overlapping(nxt)
+                if len(near) == 1:
+                    cur = near[0]  # «Arktika Labs Inc.» → карточка Arktika Labs
+                    continue
+                if near:
+                    return Resolution(None, [])
                 if kb.mentions(value) and value.lower() not in {v.lower() for c in kb.cards.values() for v in c.values()}:
                     return Resolution(None, [])  # есть где-то, но не карточкой — не знаем
                 if nxt.replace(" ", "_") in {k.split("_", 1)[-1] for k in kb.file_keys}:

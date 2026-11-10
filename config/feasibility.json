@@ -2,7 +2,7 @@
   "files": {
     "extensions": ["py", "csv", "tsv", "json", "txt", "md", "xlsx", "yaml", "yml", "db", "sqlite"],
     "ignore": ["answer.txt"],
-    "output_verbs": ["write", "create", "save", "produce", "output", "generate", "store"],
+    "output_verbs": ["write", "create", "save", "produce", "output", "generate", "store", "put", "place", "dump", "export", "append", "record", "report"],
     "output_window_chars": 40,
     "soft_extensions": ["py"]
   },
@@ -25,7 +25,7 @@
   "math": {
     "vague_re": "\\b(an unknown number of|a certain number of|an unspecified number of|some|several|a few|a number of)\\s+[a-z]+",
     "vague_hard_re": "\\b(?:an unknown number of|a certain number of|an unspecified number of|a number of)\\s+[a-z]+|\\b(?:ships|sells|receives|for)\\s+(?:some|several|a few)\\s+[a-z]+|\\bof\\s+(?:some|several|a few)\\s+[a-z]+\\s+each\\b",
-    "zero_res": ["\\binto 0\\b", "\\bdivided (?:equally )?by 0\\b", "\\bamong 0\\b", "\\bbetween 0\\b"],
+    "zero_res": ["\\binto 0(?![.,]\\d)\\b", "\\bdivided (?:equally )?by 0(?![.,]\\d)\\b", "\\bamong 0(?![.,]\\d)\\b", "\\bbetween 0(?![.,]\\d)\\b(?! and\\b)"],
     "unit_re": "how many ([a-z]+)"
   },
   "search": {

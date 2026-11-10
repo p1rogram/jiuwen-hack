@@ -60,8 +60,13 @@ class DataCheck:
 
     @staticmethod
     def _read(path: Path) -> tuple[list[str], list[list[str]]]:
-        delim = "\t" if path.suffix == ".tsv" else ","
-        with path.open(encoding="utf-8", errors="replace", newline="") as fh:
+        # utf-8-sig: BOM иначе прилипает к первому столбцу; разделитель — по первой строке («;» в .csv тоже бывает)
+        with path.open(encoding="utf-8-sig", errors="replace", newline="") as fh:
+            first = fh.readline()
+            delim = "\t" if path.suffix == ".tsv" else ","
+            if delim not in first:
+                delim = max(";\t|", key=first.count) if any(c in first for c in ";\t|") else delim
+            fh.seek(0)
             reader = csv.reader(fh, delimiter=delim)
             header = [h.strip().lower() for h in next(reader, [])]
             return header, list(reader)

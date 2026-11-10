@@ -31,8 +31,16 @@ def roots(task: Task) -> list[Path]:
 
 
 def find_file(task: Task, rel: str) -> Path | None:
+    """Путь от корня задачи, иначе — тот же путь глубже: «The directory data/ contains sales.csv» лежит в data/."""
     for root in roots(task):
         path = root / rel
         if path.exists():
             return path
+    parts = Path(rel).parts
+    for root in roots(task):
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob(parts[-1])):
+            if path.parts[-len(parts):] == parts:
+                return path
     return None
