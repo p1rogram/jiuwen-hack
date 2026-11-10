@@ -36,6 +36,7 @@
 | `harness/console_format.py` (`LineFormat`) | строки консоли из событий и чисел (разделители, подписи статусов) — без ввода-вывода | — | `config/console.json` |
 | `harness/jiuwen_logging.py` | тихий openjiuwen: его журнал только в файл, фильтр `SyntaxWarning` pysbd; импортируется до `openjiuwen.core.foundation.llm` | — | `config/console.json` |
 | `tools/` | замеры моделей, запуск в Docker или Apptainer (`docker_run`, проверка сервера стенда перед стартом), проверка сервера моделей (`probe_server`, только stdlib) и колёс lock под x86_64/aarch64 (`check_wheels`), локальная оценка ответов; калибровка модели расхода (`calibrate_cost`, данные — `cost_data`) и вероятностей (`calibrate_success`), проигрыш журналов при урезанном бюджете (`simulate_budget`, в т. ч. с политикой EMV), парный отчёт A/B прогонов на одних задачах (`ab_report`: решено, с первой попытки, цена, форма ответа, регрессии) | работу харнесса в контейнере | — |
+| `harness/rules/` | этап 0: решение math/data/search кодом, когда условие целиком по шаблону (`math_rules`, `data_rules`, `search_rules`, диспетчер `RulesSolver`); иначе `None` | вызов LLM, невыполнимость | `Task`, `config/rules.json` |
 | `tools/gen/` | генерация тренировочных наборов (по модулю на тип), разметка `_labels.json`, офлайн-оценка детектора, отчёт прогона | работу харнесса | `harness.feasibility` (оценка) |
 
 ## Откуда берётся контент
@@ -44,6 +45,7 @@
   `config/cost_model.json` (пишет `tools/calibrate_cost.py`); вероятности веток и `p_feasible`:
   `config/success_model.json` (раздел `priors` — вручную, остальное пишет `tools/calibrate_success.py`).
 - Форматы строк консоли, подписи статусов, интервалы, замены символов, выводы журнала openjiuwen: `config/console.json`.
+- Шаблоны решателя по правилам (предложения условия, вопросы, поля kb): `config/rules.json`.
 - Ключевые слова детектора невыполнимых (синонимы полей, слова-заменители чисел): `config/feasibility.json`.
 - Шаблоны инструкций и словари генератора: `tools/gen/content/` (`templates.json`, `vocab.json`, пул функций
   `coding_pool.py`).
@@ -52,7 +54,7 @@
 
 ## Поток данных
 `load_tasks` → фаза A для всех задач (до 5 параллельно, без LLM): `FeasibilityDetector` (hard → пропуск,
-0 токенов) → `Stage1Prompt.build` (`WorkspaceSnapshot`) → `TaskPlanner.order` (`DecisionPolicy.priority`) →
+0 токенов) → без сигналов `RulesSolver` (ответ по шаблону → `verified`, `solved_by: rules`, 0 токенов) → `Stage1Prompt.build` (`WorkspaceSnapshot`) → `TaskPlanner.order` (`DecisionPolicy.priority`) →
 `DecisionPolicy.skip_soft` при λ всех задач (`skipped_low_value`, 0 токенов) →
 фаза B (до 5 параллельно): `TaskPlanner.admit` (резерв `high` в `BudgetLedger`; не поместилась — второй
 проход после остальных, затем `skipped_budget`) →
