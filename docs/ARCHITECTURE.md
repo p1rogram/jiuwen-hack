@@ -41,7 +41,7 @@
 | `harness/jiuwen_logging.py` | тихий openjiuwen: его журнал только в файл, фильтр `SyntaxWarning` pysbd; импортируется до `openjiuwen.core.foundation.llm` | — | `config/console.json` |
 | `tools/` | замеры моделей, запуск в Docker или Apptainer (`docker_run`, проверка сервера стенда перед стартом), проверка сервера моделей (`probe_server`, только stdlib) и колёс lock под x86_64/aarch64 (`check_wheels`), локальная оценка ответов; калибровка модели расхода (`calibrate_cost`, данные — `cost_data`) и вероятностей (`calibrate_success`), проигрыш журналов при урезанном бюджете (`simulate_budget`, в т. ч. с политикой EMV), парный отчёт A/B прогонов на одних задачах (`ab_report`: решено, с первой попытки, цена, форма ответа, регрессии) | работу харнесса в контейнере | — |
 | `harness/rules/` | этап 0: решение math/data/search кодом, когда условие целиком по шаблону (`math_rules`, `data_rules`, `search_rules`, диспетчер `RulesSolver`); иначе `None`; при soft-сигналах только из `soft_ok` (data: месяцы за 12, значения фильтра нет в CSV и нет похожего — ответ «0») | вызов LLM, невыполнимость | `Task`, `config/rules.json` |
-| `tools/gen/` | генерация тренировочных наборов (по модулю на тип), разметка `_labels.json`, офлайн-оценка детектора, отчёт прогона | работу харнесса | `harness.feasibility` (оценка) |
+| `tools/gen/` | генерация тренировочных наборов (по модулю на тип), разметка `_labels.json`, офлайн-оценка детектора, отчёт прогона; набор вариантов — новые формулировки и виды вопросов (`variants`, `variants_data`, `variants_search`, эталоны и скрытые тесты coding вне папки задач) и его оценка (`score_variants`: strip + lower, видимые + скрытые тесты) | работу харнесса | `harness.feasibility` (оценка) |
 
 ## Откуда берётся контент
 - Параметры (модели, лимиты, бюджет, `stage2.max_steps`): `config/harness.json`; отличия стенда (адрес, имена
@@ -52,7 +52,7 @@
 - Шаблоны решателя по правилам (предложения условия, вопросы, поля kb): `config/rules.json`.
 - Ключевые слова детектора невыполнимых (синонимы полей, слова-заменители чисел): `config/feasibility.json`.
 - Шаблоны инструкций и словари генератора: `tools/gen/content/` (`templates.json`, `vocab.json`, пул функций
-  `coding_pool.py`).
+  `coding_pool.py`; набор вариантов — `variants_pool.py`, `variants_coding.py`).
 - Тексты промптов: `prompts/*.txt`.
 - Примеры задач организаторов: `data/task-examples/task-dir`.
 
