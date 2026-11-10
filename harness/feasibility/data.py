@@ -10,6 +10,7 @@ from harness.feasibility.model import HARD, SOFT, Signal, find_file, questions
 from harness.tasks import Task
 
 CSV_NAME_RE = re.compile(r"(?<![\w/.-])((?:[\w-]+/)*[\w-]+\.(?:csv|tsv))\b")
+KEY_ERROR_RE = re.compile(r"KeyError: ['\"]([^'\"]+)['\"]")
 
 
 def mentions(text: str, column: str) -> bool:
@@ -20,21 +21,45 @@ def mentions(text: str, column: str) -> bool:
 class DataCheck:
     def __init__(self, cfg: dict[str, Any]):
         self._declared_re = re.compile(cfg["columns_declared_re"])
+        self._list_re = re.compile(cfg["columns_list_re"])
         self._triggers = cfg["column_triggers"]
         self._filters = {col: re.compile(rx) for col, rx in cfg["value_filters"].items()}
         self._months_re = re.compile(cfg["months_re"])
         self._max_bytes = int(cfg["max_bytes"])
 
-    def check(self, task: Task) -> list[Signal]:
+    def _csv(self, task: Task) -> Path | None:
         files = [p for p in (find_file(task, n) for n in CSV_NAME_RE.findall(task.instruction)) if p and p.is_file()]
+        # нет файла — это сигнал общей проверки; несколько файлов — не разбираем
+        return files[0] if len(files) == 1 and files[0].stat().st_size <= self._max_bytes else None
+
+    def missing_declared(self, task: Task, error: str) -> str | None:
+        """Столбец из `KeyError` скрипта, если условие его объявило, а в шапке CSV его нет, — иначе None.
+
+        Только объявленный: столбец, который модель сама вывела из вопроса («revenue» = units·price), повтор
+        ещё может исправить; объявленного и отсутствующего в файле — данных для ответа нет."""
+        m = KEY_ERROR_RE.search(error)
+        path = self._csv(task) if m and task.task_type == "data_analysis" else None
+        if path is None:
+            return None
+        header, _ = self._read(path)
+        col = m.group(1).strip().lower()
+        declared = self._declared(task.instruction, header)
+        # CSV без шапки (ни одного объявленного столбца в первой строке): повтор с header=None ещё может помочь
+        if col not in header and col in declared and declared & set(header):
+            return col
+        return None
+
+    def check(self, task: Task) -> list[Signal]:
         question = " ".join(questions(task.instruction)) or task.instruction
         signals = self._months(question)
-        if len(files) != 1 or files[0].stat().st_size > self._max_bytes:
-            return signals  # нет файла — это сигнал общей проверки; несколько файлов — не разбираем
-        header, rows = self._read(files[0])
+        path = self._csv(task)
+        if path is None:
+            return signals
+        files = [path]
+        header, rows = self._read(path)
         if not header:
             return signals
-        declared = self._declared(task.instruction)
+        declared = self._declared(task.instruction, header)
         q = question.lower()
         # в первой строке нет ни одного объявленного столбца — это строка данных, а не шапка: CSV без заголовка
         # решается по позициям из условия, отсутствие столбца не доказано
@@ -67,9 +92,16 @@ class DataCheck:
             return [Signal("bad_months", SOFT, f"months {a}..{b}")]
         return []
 
-    def _declared(self, instruction: str) -> set[str]:
+    def _declared(self, instruction: str, header: list[str]) -> set[str]:
+        """Столбцы, которые обещает условие: «columns a, b, c» — всегда; список в скобках «(a,b,c)» — только если
+        больше половины его имён есть в шапке (иначе это не перечень столбцов, а что-то другое в скобках)."""
         m = self._declared_re.search(instruction)
-        return {c.strip().lower() for c in m.group(1).split(",")} if m else set()
+        out = {c.strip().lower() for c in m.group(1).split(",")} if m else set()
+        for lm in self._list_re.finditer(instruction):
+            names = {c.strip().lower() for c in lm.group(1).split(",")}
+            if len(names & set(header)) * 2 > len(names):
+                out |= names
+        return out
 
     @staticmethod
     def _read(path: Path) -> tuple[list[str], list[list[str]]]:

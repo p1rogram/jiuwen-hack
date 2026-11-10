@@ -1,5 +1,6 @@
-"""Узкий срез базы знаний: семена по заголовку из вопроса + обход связей «Ключ: Значение».
-Ожидания — из specs/token-cuts/spec.md, шаг 1."""
+"""Узкий срез базы знаний: семена по заголовку из вопроса + обход связей по упоминанию заголовков карточек.
+Ожидания — из specs/token-cuts/spec.md, шаг 1; разметка списком и жирным — specs/optimization-research/findings.md
+(идея 1: var2 search_v01, срез терял карточку советника при строках «- Ключ: Значение»)."""
 import asyncio
 import sys
 import tempfile
@@ -25,11 +26,14 @@ CARDS = {
 INTRO = "The directory kb/ contains a small knowledge base of markdown files. "
 
 
-def build(root: Path, question: str) -> str:
+PLAIN = "{k}: {v}"
+
+
+def build(root: Path, question: str, line: str = PLAIN) -> str:
     ws = root / "t" / "workspace"
     (ws / "kb").mkdir(parents=True)
     for stem, (name, fields) in CARDS.items():
-        body = "\n".join([f"# {name}", ""] + [f"{k}: {v}" for k, v in fields.items()]) + "\n"
+        body = "\n".join([f"# {name}", ""] + [line.format(k=k, v=v) for k, v in fields.items()]) + "\n"
         (ws / "kb" / f"{stem}.md").write_text(body, encoding="utf-8")
     task = Task("search_x", "search", INTRO + question, 1.0, "exact_str", root / "t")
     return asyncio.run(WorkspaceSnapshot(load_settings_raw()["snapshot"]).build(task))
@@ -54,6 +58,17 @@ class KbSlice(unittest.TestCase):
         snap = build(self.root, "In which year was Pavel Novak born?")
         self.assertIn("--- kb/company_iris_optics.md ---", snap)
         self.assertIn("--- kb/person_kira_lee.md ---", snap)
+
+    def test_chain_found_in_any_markup(self):
+        # должно пройти: звено цепочки — упоминание имени другой карточки, разметка строки не важна
+        q = "In which city is the headquarters of the employer of Anna Lee's mentor?"
+        for line in ("- {k}: {v}", "* **{k}:** {v}", "| {k} | {v} |", "Their {k} is {v}."):
+            with self.subTest(line=line):
+                root = self.root / str(abs(hash(line)))
+                snap = build(root, q, line)
+                for stem in ("person_anna_lee", "person_boris_kim", "company_fjord_data"):
+                    self.assertIn(f"--- kb/{stem}.md ---", snap)
+                self.assertNotIn("company_iris_optics", snap)
 
 
 if __name__ == "__main__":

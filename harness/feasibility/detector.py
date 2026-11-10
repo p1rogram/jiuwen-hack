@@ -33,6 +33,10 @@ class FeasibilityDetector:
                 signals.append(Signal("detector_error", INFO, f"{type(checker).__name__}: {type(exc).__name__}: {exc}"[:300]))
         return signals
 
+    def missing_column(self, task: Task, error: str) -> str | None:
+        """Объявленный условием столбец из KeyError скрипта, которого нет в CSV (для вида провала в Verifier)."""
+        return self._by_type["data_analysis"].missing_declared(task, error)
+
 
 def blocking(signals: Iterable[Signal], skip_severities: Iterable[str]) -> list[Signal]:
     skip = set(skip_severities)

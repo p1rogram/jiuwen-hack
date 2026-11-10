@@ -8,7 +8,7 @@ from harness.outcome import Outcome
 from harness.prompting import Prepared
 from harness.solver import Stage1Solver
 from harness.success_model import RETRY, STAGE1, STAGE2, SuccessModel
-from harness.verifier import UNSOLVABLE, Verdict
+from harness.verifier import TERMINAL_KINDS, Verdict
 
 
 class Stage2(Protocol):
@@ -56,8 +56,8 @@ class TaskPipeline:
         self._apply(outcome, verdict, STAGE1)
         self._success.observe(STAGE1, t, "", verdict.ok)
         allowed = self._allowed(outcome)
-        # отказ модели — конец задачи: ни повтора, ни этапа 2
-        while not verdict.ok and verdict.kind != UNSOLVABLE and allowed:
+        # отказ модели, обрыв по потолку, отсутствующий столбец — конец задачи: ни повтора, ни этапа 2
+        while not verdict.ok and verdict.kind not in TERMINAL_KINDS and allowed:
             lam = 0.0 if self._branch else self._lam()
             d = self._policy.branch(prepared, verdict.kind, lam, self._forced_options(allowed))
             self._decided(prepared, outcome, d, verdict.problem)
@@ -111,8 +111,8 @@ class TaskPipeline:
     def _apply(outcome: Outcome, verdict: Verdict, branch: str) -> None:
         if verdict.answer:
             outcome.answer = verdict.answer
-        if verdict.kind == UNSOLVABLE:
-            outcome.answer = ""  # ответ прошлой попытки не сдаём: модель сама признала, что данных нет
+        if verdict.kind in TERMINAL_KINDS:
+            outcome.answer = ""  # ответ прошлой попытки не сдаём: данных для ответа нет
         outcome.verified = verdict.ok
         outcome.problem, outcome.failure = ("", "") if verdict.ok else (verdict.problem, verdict.kind)
         if verdict.ok:

@@ -34,6 +34,7 @@
   },
   "stage1": {
     "attempts": 2,
+    "max_output_tokens": {"math": 400, "data_analysis": 1024, "search": 1024, "coding": 1024},
     "script_timeout_sec": 60,
     "error_tail_chars": 1500,
     "compact_test_output": true,

@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from harness.executor import RunResult, run_python
 from harness.tasks import Task
@@ -23,6 +24,12 @@ NO_CODE, SCRIPT_ERROR, TESTS_FAIL, BAD_FORMAT = "no_code", "script_error", "test
 FAILURE_KINDS = (NO_CODE, SCRIPT_ERROR, TESTS_FAIL, BAD_FORMAT)
 # отказ модели (маркер в последней строке stdout): не провал для веток — задача на нём заканчивается
 UNSOLVABLE = "unsolvable"
+# ответ этапа 1 упёрся в потолок выхода своего типа: у выполнимых задач ответы много короче потолка, длинный —
+# рассуждение о недостающих данных с догадкой; задача заканчивается без повтора, этапа 2 и answer.txt
+TRUNCATED = "truncated"
+# скрипт data упал с KeyError на столбце, который условие объявило, а в CSV его нет: данных нет, повтор не поможет
+MISSING_COLUMN = "missing_column"
+TERMINAL_KINDS = (UNSOLVABLE, TRUNCATED, MISSING_COLUMN)
 
 
 @dataclass(frozen=True)
@@ -39,9 +46,11 @@ def last_line(text: str) -> str:
 
 
 class Verifier:
-    def __init__(self, error_tail_chars: int, unsolvable_marker: str | None = None, compact_tests: bool = False):
+    def __init__(self, error_tail_chars: int, unsolvable_marker: str | None = None, compact_tests: bool = False,
+                 column_probe: Callable[[Task, str], str | None] | None = None):
         self._tail = error_tail_chars
         self._compact = compact_tests
+        self._column_probe = column_probe  # DataCheck.missing_declared; None — без остановки по KeyError
         self._marker = unsolvable_marker.strip().upper() if unsolvable_marker else None
 
     async def check(self, task: Task, run: RunResult) -> Verdict:
@@ -51,8 +60,8 @@ class Verifier:
         if self._marker and last_line(run.stdout).strip("`'\"").upper() == self._marker:
             return Verdict(False, "", "model reported the task unsolvable", UNSOLVABLE)
         if run.returncode != 0:
-            return Verdict(False, "", f"script failed (exit {run.returncode}):\n{run.stderr[-self._tail:]}",
-                           SCRIPT_ERROR)
+            problem = f"script failed (exit {run.returncode}):\n{run.stderr[-self._tail:]}"
+            return Verdict(False, "", problem, MISSING_COLUMN if self._missing_column(task, run.stderr) else SCRIPT_ERROR)
         kind = task.check
         if kind == "unittest":
             return await self._check_tests(task.workspace)
@@ -72,6 +81,14 @@ class Verifier:
         # «Headquarters: Osaka» → «Osaka»; подпись — только буквы, поэтому «12:30» не трогаем
         m = LABEL_RE.match(line)
         return Verdict(True, m.group(1).strip() if m else line)
+
+    def _missing_column(self, task: Task, stderr: str) -> bool:
+        if self._column_probe is None or "KeyError" not in stderr:
+            return False
+        try:
+            return self._column_probe(task, stderr) is not None
+        except Exception:  # noqa: BLE001 — сбой разбора CSV не должен менять вид провала
+            return False
 
     @staticmethod
     def _answer_file(task: Task, started: float) -> str:

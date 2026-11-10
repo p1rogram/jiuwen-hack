@@ -12,6 +12,7 @@
   },
   "data": {
     "columns_declared_re": "columns\\s+([A-Za-z_][\\w]*(?:\\s*,\\s*[A-Za-z_][\\w]*)+)",
+    "columns_list_re": "\\(\\s*([A-Za-z_]\\w*(?:\\s*,\\s*[A-Za-z_]\\w*){2,})\\s*\\)",
     "column_triggers": {
       "units": ["units"],
       "price": ["price", "revenue"],

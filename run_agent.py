@@ -70,7 +70,11 @@ class Harness:
         marker = stage1_cfg["unsolvable_marker"] if stage1_cfg["unsolvable_enabled"] else None
         self.prompt = Stage1Prompt(WorkspaceSnapshot(settings.section("snapshot")), marker, stage1_cfg["tail_prompts"],
                                    stage1_cfg["patch_types"], stage1_cfg["patch_prompts"])
-        verifier = Verifier(stage1_cfg["error_tail_chars"], marker, bool(stage1_cfg.get("compact_test_output", False)))
+        feas = settings.section("feasibility")
+        self.detector = FeasibilityDetector(load_config(feas["config_file"])) if feas["enabled"] else None
+        self.skip_severities = feas["skip_severities"]
+        verifier = Verifier(stage1_cfg["error_tail_chars"], marker, bool(stage1_cfg.get("compact_test_output", False)),
+                            self.detector.missing_column if self.detector else None)
         models = settings.section("models")
         stage1 = Stage1Solver(gateway, self.prompt, verifier, model or models["stage1"], stage1_cfg, self.log)
         cost_model = CostModel(load_config(settings.raw["cost_model_file"]), acc["input_weight"])
@@ -93,9 +97,6 @@ class Harness:
             print(f"не удалось записать {self.writer.init_error}", file=sys.stderr)
         self.parallel = int(settings.raw["parallel_sessions"])
         self.profile = settings.profile
-        feas = settings.section("feasibility")
-        self.detector = FeasibilityDetector(load_config(feas["config_file"])) if feas["enabled"] else None
-        self.skip_severities = feas["skip_severities"]
         rules = settings.section("rules")
         self.rules = RulesSolver(load_config(rules["config_file"])) if rules["enabled"] else None
         self.llm_ready = settings.llm_ready

@@ -11,7 +11,7 @@ from harness.outcome import Outcome
 from harness.patching import CODE_RE, PatchApplier, find_patch
 from harness.prompting import Prepared, Stage1Prompt
 from harness.tasks import Task
-from harness.verifier import NO_CODE, Verdict, Verifier
+from harness.verifier import NO_CODE, TRUNCATED, Verdict, Verifier
 
 __all__ = ["Outcome", "Stage1Solver", "extract_code"]
 
@@ -37,6 +37,10 @@ class Stage1Solver:
         self._verifier = verifier
         self._model = model
         self._attempts = int(cfg["attempts"])
+        # потолок выхода по типу задачи — только у основного этапа 1: модели перекрёстной проверки бывают с
+        # рассуждением, его токены входят в потолок; тип без потолка — общий llm.max_output_tokens шлюза
+        caps = cfg.get("max_output_tokens", {}) if stage == "stage1" else {}
+        self._caps = {t: int(v) for t, v in caps.items()}
         self._timeout = float(cfg["script_timeout_sec"])
         self._patcher = PatchApplier()
 
@@ -53,10 +57,14 @@ class Stage1Solver:
 
     async def _attempt(self, task: Task, outcome: Outcome) -> Verdict:
         stage = f"{self._stage}.{outcome.attempts + 1}"
-        reply = await self._gw.ask(self._model, outcome.messages, task_id=task.task_id, stage=stage)
+        cap = self._caps.get(task.task_type)
+        reply = await self._gw.ask(self._model, outcome.messages, task_id=task.task_id, stage=stage, max_tokens=cap)
         outcome.attempts += 1
         outcome.add_call(self._model, stage, reply)
         outcome.messages.append({"role": "assistant", "content": reply.text})
+        if cap is not None and reply.usage.output_tokens >= cap:
+            # не исполнять обрезанный ответ: в нём догадка вместо данных, а этап 2 на таких задачах не помогал
+            return Verdict(False, "", f"reply hit the {cap}-token output cap", TRUNCATED)
         # правка (блоки с `# file:` или одни функции модуля) — только у типов patch_types; иной ответ — как скрипт
         patch_type = self._prompt.is_patch(task.task_type)
         blocks = find_patch(reply.text, task.workspace) if patch_type else None
