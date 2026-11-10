@@ -3,6 +3,11 @@
   "api_key_env_names": ["LLM_API_KEY", "NEURALDEEP_API_KEY", "OPENAI_API_KEY", "API_KEY"],
   "base_url_env_names": ["LLM_BASE_URL", "NEURALDEEP_BASE_URL", "OPENAI_BASE_URL", "BASE_URL", "API_BASE", "API_URL"],
   "api_key_optional": false,
+  "agent": {
+    "id": "jiuwen-harness",
+    "name": "jiuwen-harness",
+    "description": "Solves coding, math, data_analysis and search tasks from a tasks directory within a shared token budget"
+  },
   "models": {
     "all": ["qwen3.8-27b", "qwen3.8-27b-noreason", "qwen3.6-35b-a3b", "qwen3.6-35b-a3b-noreason"],
     "stage1": "qwen3.6-35b-a3b-noreason",

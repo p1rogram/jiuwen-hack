@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 import harness.jiuwen_logging  # noqa: F401  — первым: openjiuwen не печатает в консоль
+from harness.agent import HarnessAgent, agent_card
 from harness.budget import BudgetLedger, TokenPricing
 from harness.calllog import JsonlLog
 from harness.console import ConsoleView
@@ -29,7 +30,7 @@ from harness.snapshot import WorkspaceSnapshot
 from harness.solver import Stage1Solver
 from harness.stage2 import Stage2Solver
 from harness.success_model import SuccessModel
-from harness.tasks import Task, load_tasks
+from harness.tasks import Task
 from harness.verifier import UNSOLVABLE, Verifier
 
 
@@ -219,20 +220,18 @@ def write_error(error: str) -> dict:
 def main() -> None:
     args = parse_args()
     settings = load_settings(budget=args.budget, out=args.out, profile=args.profile)
-    tasks = load_tasks(args.tasks_dir)
-    if args.only:
-        tasks = [t for t in tasks if t.task_id in set(args.only)]
     harness = Harness(settings, args.model, args.force_stage2, args.force_branch)
+    agent = HarnessAgent(harness, agent_card(settings.section("agent")))
     # консоль только смотрит журнал: строки задач и развилок по ходу, прогресс в stderr, сводка в конце
     console = ConsoleView(load_config("console.json"), harness.ledger)
     harness.log.subscribe(console)
-    asyncio.run(run_with_console(harness, tasks, console))
+    asyncio.run(run_with_console(agent, {"tasks_dir": str(args.tasks_dir), "only": args.only}, console))
     console.summary()
 
 
-async def run_with_console(harness: Harness, tasks: list[Task], console: ConsoleView) -> list[dict]:
+async def run_with_console(agent: HarnessAgent, inputs: dict, console: ConsoleView) -> list[dict]:
     async with console.live():
-        return await harness.run(tasks)
+        return (await agent.invoke(inputs))["results"]
 
 
 if __name__ == "__main__":

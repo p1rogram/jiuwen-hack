@@ -6,7 +6,8 @@
 ## Модули и их единственная ответственность
 | Модуль | Отвечает за | НЕ отвечает за | Общается с |
 |---|---|---|---|
-| `run_agent.py` (`Harness`) | разбор аргументов, порядок и параллельность задач, λ по ещё не начатым задачам, пропуск soft-задач по политике, события `run_start` / `task_start` и итог задачи в журнал; `main` подписывает консоль на журнал | решение задачи, развилки, учёт токенов, вывод в консоль | planner, decision, pipeline, results, calllog, console |
+| `run_agent.py` (`Harness`) | разбор аргументов, порядок и параллельность задач, λ по ещё не начатым задачам, пропуск soft-задач по политике, события `run_start` / `task_start` и итог задачи в журнал; `main` подписывает консоль на журнал и запускает прогон через `HarnessAgent.invoke` | решение задачи, развилки, учёт токенов, вывод в консоль | planner, decision, pipeline, results, calllog, console |
+| `harness/agent.py` (`HarnessAgent`) | наследник openjiuwen `BaseAgent` с `AgentCard` из `config/harness.json` (`agent`): `invoke({"tasks_dir", "only"})` — загрузка задач, события `BEFORE/AFTER_INVOKE` для рельс, прогон через `Harness.run` | порядок, бюджет, развилки | tasks, `Harness` (через протокол `TaskRunner`) |
 | `harness/settings.py` | `config/harness.json` + профиль стенда (`config/profiles/<имя>.json`, `HARNESS_PROFILE` / `--profile`; ключ, которого нет в базе, — ошибка) + env (+ `.env` локально), загрузка промптов | логику решения | все читают `Settings` |
 | `harness/tasks.py` | загрузка `*/task.json` в `Task`; битый файл — пропуск, нет `reward` — 1.0 | проверку содержимого | — |
 | `harness/planner.py` | порядок задач по `DecisionPolicy.priority`, допуск задачи по `high` с резервом в бюджете | выполнимость, решение | cost_model, budget |
@@ -54,7 +55,7 @@
 - Примеры задач организаторов: `data/task-examples/task-dir`.
 
 ## Поток данных
-`load_tasks` → фаза A для всех задач (до 5 параллельно, без LLM): `FeasibilityDetector` (hard → пропуск,
+`HarnessAgent.invoke` → `load_tasks` → фаза A для всех задач (до 5 параллельно, без LLM): `FeasibilityDetector` (hard → пропуск,
 0 токенов) → без сигналов (или только из `rules.soft_ok`) `RulesSolver` (ответ по шаблону → `verified`, `solved_by: rules`, 0 токенов) → `Stage1Prompt.build` (`WorkspaceSnapshot`) → `TaskPlanner.order` (`DecisionPolicy.priority`) →
 `DecisionPolicy.skip_soft` при λ всех задач (`skipped_low_value`, 0 токенов) →
 фаза B (до 5 параллельно): `TaskPlanner.admit` (резерв `high` в `BudgetLedger`; не поместилась — второй

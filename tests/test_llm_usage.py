@@ -35,6 +35,7 @@ class FakeOpenAI:
 
     def __init__(self):
         self.bodies: list[dict] = []
+        self.content = CONTENT
         self.usage: dict | None = {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
         self.fail_codes: list[int] = []  # коды ошибок для первых запросов, по одному на запрос
         owner = self
@@ -54,7 +55,7 @@ class FakeOpenAI:
                     return
                 reply = {"id": "c1", "object": "chat.completion", "created": 0, "model": body.get("model"),
                          "choices": [{"index": 0, "finish_reason": "stop",
-                                      "message": {"role": "assistant", "content": CONTENT}}]}
+                                      "message": {"role": "assistant", "content": owner.content}}]}
                 if owner.usage is not None:
                     reply["usage"] = owner.usage
                 data = json.dumps(reply).encode()
