@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from harness.agent import HarnessAgent, agent_card  # первым: тихий openjiuwen
+from harness.agent import HarnessAgent, agent_card, build_agent  # первым: тихий openjiuwen
 from openjiuwen.core.single_agent.base import BaseAgent
 from openjiuwen.core.single_agent.rail.base import AgentRail
 from harness.settings import Settings, load_settings_raw
@@ -62,7 +62,7 @@ class AgentRun(unittest.TestCase):
                                  out_path=None, log_dir=self.root / "logs", budget=100_000)
 
     def agent(self) -> HarnessAgent:
-        return HarnessAgent(Harness(self.settings, None), agent_card(self.settings.section("agent")))
+        return asyncio.run(build_agent(Harness(self.settings, None), agent_card(self.settings.section("agent"))))
 
     @staticmethod
     def summary(results: list[dict]) -> dict:
@@ -73,8 +73,12 @@ class AgentRun(unittest.TestCase):
 
     def test_invoke_matches_harness_run(self):
         direct_dir, agent_dir = write_tasks(self.root / "direct"), write_tasks(self.root / "agent")
-        direct = asyncio.run(Harness(self.settings, None).run(load_tasks(direct_dir)))
-        via_agent = asyncio.run(self.agent().invoke({"tasks_dir": str(agent_dir)}))["results"]
+        harness = Harness(self.settings, None)
+        direct = asyncio.run(harness.run(load_tasks(direct_dir)))
+        agent = self.agent()
+        via_agent = asyncio.run(agent.invoke({"tasks_dir": str(agent_dir)}))["results"]
+        # рельса списала вместо шлюза, а не вместе с ним
+        self.assertAlmostEqual(agent._runner.ledger.spent, harness.ledger.spent)
         self.assertEqual(self.summary(via_agent), self.summary(direct))
         self.assertEqual({r["status"] for r in via_agent}, {"verified"})
         self.assertTrue(all(r["cost"] > 0 for r in via_agent))  # путь LLM, а не этап 0

@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 import harness.jiuwen_logging  # noqa: F401  — первым: openjiuwen не печатает в консоль
-from harness.agent import HarnessAgent, agent_card
+from harness.agent import agent_card, build_agent
 from harness.budget import BudgetLedger, TokenPricing
 from harness.calllog import JsonlLog
 from harness.console import ConsoleView
@@ -61,7 +61,7 @@ class Harness:
         self.ledger = BudgetLedger(settings.budget)
         run_id = time.strftime("%Y%m%d-%H%M%S")
         self.log = JsonlLog(settings.log_dir / f"run-{run_id}.jsonl")
-        gateway = LlmGateway(settings.base_url, settings.api_key, settings.section("llm"),
+        self.gateway = gateway = LlmGateway(settings.base_url, settings.api_key, settings.section("llm"),
                              TokenPricing(acc["input_weight"], acc["reasoning_in_completion"]),
                              self.ledger, self.log, settings.raw["model_map"],
                              acc["missing_usage_chars_per_token"])
@@ -221,15 +221,16 @@ def main() -> None:
     args = parse_args()
     settings = load_settings(budget=args.budget, out=args.out, profile=args.profile)
     harness = Harness(settings, args.model, args.force_stage2, args.force_branch)
-    agent = HarnessAgent(harness, agent_card(settings.section("agent")))
     # консоль только смотрит журнал: строки задач и развилок по ходу, прогресс в stderr, сводка в конце
     console = ConsoleView(load_config("console.json"), harness.ledger)
     harness.log.subscribe(console)
-    asyncio.run(run_with_console(agent, {"tasks_dir": str(args.tasks_dir), "only": args.only}, console))
+    inputs = {"tasks_dir": str(args.tasks_dir), "only": args.only}
+    asyncio.run(run_with_console(harness, agent_card(settings.section("agent")), inputs, console))
     console.summary()
 
 
-async def run_with_console(agent: HarnessAgent, inputs: dict, console: ConsoleView) -> list[dict]:
+async def run_with_console(harness: Harness, card, inputs: dict, console: ConsoleView) -> list[dict]:
+    agent = await build_agent(harness, card)
     async with console.live():
         return (await agent.invoke(inputs))["results"]
 

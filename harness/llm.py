@@ -14,6 +14,7 @@ from openjiuwen.core.foundation.llm import Model, ModelClientConfig, ModelReques
 
 from harness.budget import BudgetLedger, TokenPricing, Usage
 from harness.calllog import JsonlLog
+from harness.model_call import BudgetExhausted, ModelCall, ModelCallHooks, admit, settle
 from harness.prompting import prompt_chars
 
 RESET_RE = re.compile(r"Limit resets at: (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) UTC")
@@ -26,10 +27,6 @@ class LlmReply:
     usage: Usage
     cost: float
     latency_sec: float
-
-
-class BudgetExhausted(RuntimeError):
-    pass
 
 
 class LlmGateway:
@@ -57,6 +54,8 @@ class LlmGateway:
         self._net_retries = int(llm_cfg["network_retries"])
         self._net_wait = float(llm_cfg["network_retry_wait_sec"])
         self._net_markers = tuple(llm_cfg["network_error_markers"])
+        # события вызова модели агента (HarnessAgent): допуск и списание делает его рельса TokenBudgetRail
+        self.hooks: ModelCallHooks | None = None
 
     def _rate_limit_wait(self, error: str) -> float | None:
         if "429" not in error:
@@ -124,10 +123,26 @@ class LlmGateway:
             out, reasoning_tokens, missing = math.ceil((len(text) + len(reasoning)) / cpt), 0, True
         return Usage(input_tokens=inp, output_tokens=out, reasoning_tokens=reasoning_tokens), missing
 
+    async def _fire(self, event: str, call: ModelCall) -> None:
+        """Событие агента; сбой обработчика не роняет вызов модели — допуск и списание шлюз тогда сделает сам."""
+        if self.hooks is None:
+            return
+        try:
+            await getattr(self.hooks, event)(call)
+        except BudgetExhausted:
+            raise
+        except Exception as exc:
+            self._log.write({"kind": "hook_error", "task_id": call.task_id, "event": event,
+                             "error": f"{type(exc).__name__}: {exc}"[:300]})
+
     async def ask(self, model: str, messages: list[dict[str, str]], *, task_id: str, stage: str,
                   max_tokens: int | None = None) -> LlmReply:
-        if self._ledger.remaining <= 0:
-            raise BudgetExhausted("budget exhausted")
+        call = ModelCall(messages=messages, task_id=task_id, stage=stage, model=model,
+                         served_model=self.served_name(model) if model in self._model_map else None,
+                         prompt_chars=prompt_chars(messages))
+        await self._fire("before_model_call", call)
+        if not call.admitted:
+            admit(call, self._ledger)
         started = time.monotonic()
         msg = await self._invoke(model, messages, max_tokens or self._cfg["max_output_tokens"], task_id)
         latency = time.monotonic() - started
@@ -135,14 +150,10 @@ class LlmGateway:
         reasoning = msg.reasoning_content or ""
         usage, missing = self._usage(msg.usage_metadata, messages, text, reasoning)
         cost = self._pricing.cost(usage)
-        self._ledger.charge(cost, task_id)
-        self._log.write({
-            "kind": "llm_call", "task_id": task_id, "stage": stage, "model": model,
-            **({"served_model": self.served_name(model)} if model in self._model_map else {}),
-            "prompt_chars": prompt_chars(messages), "input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
-            "reasoning_tokens": usage.reasoning_tokens, "reasoning_chars": len(reasoning),
-            "content_chars": len(text), "cost": round(cost, 1), "latency_sec": round(latency, 2),
-            "budget_spent": round(self._ledger.spent, 1),
-            **({"usage_missing": True} if missing else {}),
-        })
-        return LlmReply(text=text, reasoning=reasoning, usage=usage, cost=cost, latency_sec=latency)
+        reply = LlmReply(text=text, reasoning=reasoning, usage=usage, cost=cost, latency_sec=latency)
+        call.response, call.usage, call.cost, call.latency_sec = reply, usage, cost, latency
+        call.reasoning_chars, call.content_chars, call.usage_missing = len(reasoning), len(text), missing
+        await self._fire("after_model_call", call)
+        if not call.charged:
+            settle(call, self._ledger, self._log)
+        return reply

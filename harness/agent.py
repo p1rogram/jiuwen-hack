@@ -9,10 +9,19 @@ from openjiuwen.core.single_agent import AgentCard
 from openjiuwen.core.single_agent.base import BaseAgent
 from openjiuwen.core.single_agent.rail.base import AgentCallbackEvent, InvokeInputs
 
+from harness.budget import BudgetLedger
+from harness.calllog import JsonlLog
+from harness.llm import LlmGateway
+from harness.model_call import ModelCall
+from harness.rails import TokenBudgetRail
 from harness.tasks import Task, load_tasks
 
 
 class TaskRunner(Protocol):
+    ledger: BudgetLedger
+    log: JsonlLog
+    gateway: LlmGateway
+
     async def run(self, tasks: list[Task]) -> list[dict]: ...
 
 
@@ -45,6 +54,20 @@ class HarnessAgent(BaseAgent):
         await self._execute_callbacks(AgentCallbackEvent.AFTER_INVOKE, InvokeInputs(query=query, result=result))
         return result
 
+    async def before_model_call(self, call: ModelCall) -> None:
+        await self._execute_callbacks(AgentCallbackEvent.BEFORE_MODEL_CALL, call)
+
+    async def after_model_call(self, call: ModelCall) -> None:
+        await self._execute_callbacks(AgentCallbackEvent.AFTER_MODEL_CALL, call)
+
     async def stream(self, inputs: dict[str, Any], session: Any = None,
                      stream_modes: Any = None) -> AsyncIterator[dict[str, Any]]:
         yield await self.invoke(inputs, session)
+
+
+async def build_agent(runner: TaskRunner, card: AgentCard) -> HarnessAgent:
+    """Агент с рельсой учёта токенов; вызовы модели шлюза идут через события агента."""
+    agent = HarnessAgent(runner, card)
+    await agent.register_rail(TokenBudgetRail(runner.ledger, runner.log))
+    runner.gateway.hooks = agent
+    return agent
