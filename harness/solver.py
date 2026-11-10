@@ -29,8 +29,9 @@ def extract_code(text: str) -> str | None:
 
 class Stage1Solver:
     def __init__(self, gateway: LlmGateway, prompt: Stage1Prompt, verifier: Verifier,
-                 model: str, cfg: dict[str, Any], log: JsonlLog | None = None):
+                 model: str, cfg: dict[str, Any], log: JsonlLog | None = None, stage: str = "stage1"):
         self._gw = gateway
+        self._stage = stage  # имя этапа в журнале: модель расхода калибруется только по stage1.*
         self._log = log
         self._prompt = prompt
         self._verifier = verifier
@@ -51,7 +52,7 @@ class Stage1Solver:
         return await self._attempt(prepared.task, outcome)
 
     async def _attempt(self, task: Task, outcome: Outcome) -> Verdict:
-        stage = f"stage1.{outcome.attempts + 1}"
+        stage = f"{self._stage}.{outcome.attempts + 1}"
         reply = await self._gw.ask(self._model, outcome.messages, task_id=task.task_id, stage=stage)
         outcome.attempts += 1
         outcome.add_call(self._model, stage, reply)

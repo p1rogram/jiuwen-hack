@@ -84,6 +84,19 @@ class AgentRun(unittest.TestCase):
         self.assertTrue(all(r["cost"] > 0 for r in via_agent))  # путь LLM, а не этап 0
         self.assertEqual((agent_dir / "math_a1" / "answer.txt").read_text(encoding="utf-8").strip(), "42")
 
+    def test_crosscheck_flag_adds_second_opinion(self):
+        raw = load_settings_raw(None)
+        raw["crosscheck"] = dict(raw["crosscheck"], enabled=True)
+        settings = Settings(raw=raw, base_url=self.srv.base_url, api_key="test-key", out_path=None,
+                            log_dir=self.root / "xlogs", budget=100_000)
+        agent = asyncio.run(build_agent(Harness(settings, None), agent_card(raw["agent"])))
+        out = asyncio.run(agent.invoke({"tasks_dir": str(write_tasks(self.root / "x")), "only": ["math_a1"]}))
+        self.assertEqual(out["results"][0]["answer"], "42")
+        lines = [json.loads(s) for p in (self.root / "xlogs").glob("*.jsonl")
+                 for s in p.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([r["result"] for r in lines if r["kind"] == "crosscheck"], ["agree"])
+        self.assertIn("crosscheck2.1", [r["stage"] for r in lines if r["kind"] == "llm_call"])
+
     def test_rail_sees_invoke_and_only_filters(self):
         agent = self.agent()
         rail = EventRail()

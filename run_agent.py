@@ -16,6 +16,7 @@ from harness.budget import BudgetLedger, TokenPricing
 from harness.calllog import JsonlLog
 from harness.console import ConsoleView
 from harness.cost_model import CostModel
+from harness.crosscheck import CrossCheck
 from harness.decision import DecisionPolicy
 from harness.feasibility import FeasibilityDetector, Signal, blocking
 from harness.rules import RulesSolver
@@ -77,8 +78,14 @@ class Harness:
                               stage1_cfg["patch_types"])
         success = SuccessModel(load_config(settings.raw["success_model_file"]))
         self.policy = DecisionPolicy(success, cost_model, self.ledger)
+        cross_cfg = settings.section("crosscheck")
+        review = CrossCheck(
+            Stage1Solver(gateway, self.prompt, verifier, cross_cfg["second_model"], stage1_cfg, self.log, "crosscheck2"),
+            Stage1Solver(gateway, self.prompt, verifier, cross_cfg["arbiter_model"], stage1_cfg, self.log, "crosscheck3"),
+            cross_cfg, self.ledger, self.log) if cross_cfg["enabled"] else None
         self.solver = TaskPipeline(stage1, stage2, self.policy, success, self.lam,
-                                   load_prompt("stage2_forced.txt") if force_stage2 else None, self.log, force_branch)
+                                   load_prompt("stage2_forced.txt") if force_stage2 else None, self.log, force_branch,
+                                   review)
         self.planner = TaskPlanner(cost_model, self.ledger, self.policy.priority)
         self.pending: dict[str, Prepared] = {}  # ещё не начатые задачи — по ним считается λ
         self.writer = ResultsWriter(settings.out_path)

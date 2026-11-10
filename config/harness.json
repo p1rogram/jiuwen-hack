@@ -50,6 +50,13 @@
     "obs_tail_chars": 1200,
     "test_feedback": true
   },
+  "crosscheck": {
+    "enabled": false,
+    "types": ["math", "data_analysis", "search"],
+    "second_model": "qwen3.8-27b-noreason",
+    "arbiter_model": "qwen3.6-35b-a3b",
+    "min_available_tokens": 15000
+  },
   "success_model_file": "success_model.json",
   "snapshot": {
     "max_file_chars": 6000,

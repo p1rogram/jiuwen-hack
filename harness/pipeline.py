@@ -15,6 +15,10 @@ class Stage2(Protocol):
     async def solve(self, prepared: Prepared, outcome: Outcome, failed: Verdict, budget: float) -> Verdict: ...
 
 
+class Review(Protocol):
+    async def review(self, prepared: Prepared, outcome: Outcome) -> None: ...
+
+
 class EventLog(Protocol):
     def write(self, record: dict[str, Any]) -> None: ...
 
@@ -33,8 +37,9 @@ class TaskPipeline:
 
     def __init__(self, stage1: Stage1Solver, stage2: Stage2 | None, policy: DecisionPolicy,
                  success: SuccessModel, lam: Callable[[], float], forced_problem: str | None = None,
-                 log: EventLog | None = None, forced_branch: str | None = None):
+                 log: EventLog | None = None, forced_branch: str | None = None, review: Review | None = None):
         self._s1 = stage1
+        self._review = review  # перекрёстная проверка решённой задачи (crosscheck), None — выключена
         self._branch = forced_branch
         self._s2 = stage2
         self._policy = policy
@@ -67,6 +72,8 @@ class TaskPipeline:
                 allowed = []  # после этапа 2 веток нет
             self._success.observe(d.choice, t, kind, verdict.ok)
             self._apply(outcome, verdict, d.choice)
+        if self._review is not None and outcome.verified:
+            await self._review.review(prepared, outcome)
         return outcome
 
     async def _forced_stage2(self, prepared: Prepared, outcome: Outcome) -> Outcome:
