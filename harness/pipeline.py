@@ -55,7 +55,7 @@ class TaskPipeline:
         while not verdict.ok and verdict.kind != UNSOLVABLE and allowed:
             lam = 0.0 if self._branch else self._lam()
             d = self._policy.branch(prepared, verdict.kind, lam, self._forced_options(allowed))
-            self._decided(prepared, outcome, d)
+            self._decided(prepared, outcome, d, verdict.problem)
             if d.choice == STOP:
                 break
             kind = verdict.kind
@@ -80,10 +80,12 @@ class TaskPipeline:
             self._apply(outcome, verdict, STAGE2)
         return outcome
 
-    def _decided(self, prepared: Prepared, outcome: Outcome, d: Decision) -> None:
-        outcome.decisions.append(d.as_dict())
+    def _decided(self, prepared: Prepared, outcome: Outcome, d: Decision, problem: str = "") -> None:
+        # начало текста провала — для разбора замеров (сам ответ модели в журнал не пишется)
+        rec = {**d.as_dict(), **({"problem": problem[:300]} if problem else {})}
+        outcome.decisions.append(rec)
         if self._log is not None:
-            self._log.write({"kind": "decision", "task_id": prepared.task.task_id, **d.as_dict()})
+            self._log.write({"kind": "decision", "task_id": prepared.task.task_id, **rec})
 
     def _forced_options(self, allowed: list[str]) -> list[str]:
         if self._branch is None or self._branch not in allowed:
