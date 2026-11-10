@@ -1,4 +1,5 @@
 {
+  "soft_ok": ["bad_months", "unknown_value"],
   "math": {
     "start": "^A warehouse starts with (?P<n>\\d+) (?P<unit>[a-z]+)\\.$",
     "ops": [
@@ -18,7 +19,8 @@
       {"re": "^What was the total revenue \\(sum of units \\* price\\) of product '(?P<product>[^']+)' in months (?P<m1>\\d+) through (?P<m2>\\d+) inclusive\\?$", "sum": ["units", "price"]}
     ],
     "month_column": "month",
-    "filter_columns": ["product", "region"]
+    "filter_columns": ["product", "region"],
+    "alias_cutoff": 0.8
   },
   "search": {
     "intro": "^The directory (?P<dir>[\\w-]+)/ contains a small knowledge base of markdown files\\.$",

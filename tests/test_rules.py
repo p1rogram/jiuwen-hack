@@ -121,12 +121,27 @@ class DataRules(Base):
             with self.subTest(intro=intro, head=body[:60]):
                 self.assertIsNone(self.solve("data_analysis", intro + self.Q + DATA_TOOL, {"sales.csv": body}))
 
-    def test_unknown_product_and_bad_months_left_to_llm(self):
+    def test_absent_value_and_months_past_12_give_sum_over_empty_rows(self):
+        # specs/token-cuts-2 шаг 2: так же отвечает LLM (run73/81/83 — «0» в 4 из 4), но за 0 токенов
         rows = DATA_INTRO.format(n=4)
-        other = self.Q.replace("widget", "sprocket")
-        months = self.Q.replace("7 through 8", "8 through 13")
-        self.assertIsNone(self.solve("data_analysis", rows + other + DATA_TOOL, {"sales.csv": SALES}))
-        self.assertIsNone(self.solve("data_analysis", rows + months + DATA_TOOL, {"sales.csv": SALES}))
+        region_q = "How many units of product 'gadget' were sold in region 'east' in months 1 through 12 inclusive?"
+        cases = [
+            (self.Q.replace("widget", "sprocket"), "0"),
+            (self.Q.replace("7 through 8", "13 through 15"), "0"),
+            (self.Q.replace("7 through 8", "8 through 13"), "10"),
+            (region_q, "0"),  # оба значения есть, вместе — ни в одной строке
+            (region_q.replace("'east'", "'north'"), "0"),
+        ]
+        for q, want in cases:
+            with self.subTest(q=q):
+                self.assertEqual(self.solve("data_analysis", rows + q + DATA_TOOL, {"sales.csv": SALES}), want)
+
+    def test_value_like_one_in_csv_or_reversed_months_left_to_llm(self):
+        rows = DATA_INTRO.format(n=4)
+        for q in [self.Q.replace("'widget'", "'Widget'"), self.Q.replace("'widget'", "'widgets'"),
+                  self.Q.replace("7 through 8", "8 through 7")]:
+            with self.subTest(q=q):
+                self.assertIsNone(self.solve("data_analysis", rows + q + DATA_TOOL, {"sales.csv": SALES}))
 
 
 class SearchRules(Base):
@@ -225,6 +240,20 @@ class Stage0InHarness(Base):
         task = self.task("math", "A warehouse starts with 100 boxes. It sells 40 boxes." + MATH_Q)
         asyncio.run(h._prepare(task))
         self.assertEqual(h.prompt.built, [task.task_id])
+
+    def test_soft_signal_from_soft_ok_answered_by_rules(self):
+        class ValueDetector:
+            def check(self, task):
+                from harness.feasibility.model import SOFT, Signal
+                return [Signal("unknown_value", SOFT, "product 'sprocket' not in sales.csv")]
+
+        h = self.harness()
+        h.detector = ValueDetector()
+        q = DataRules.Q.replace("widget", "sprocket")
+        task = self.task("data_analysis", DATA_INTRO.format(n=4) + q + DATA_TOOL, {"sales.csv": SALES})
+        rec = asyncio.run(h._prepare(task))
+        self.assertEqual((rec["status"], rec["solved_by"], rec["answer"]), ("verified", "rules", "0"))
+        self.assertEqual(h.prompt.built, [])
 
 
 if __name__ == "__main__":

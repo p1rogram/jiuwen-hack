@@ -141,8 +141,8 @@ class Harness:
             if blocking(signals, self.skip_severities):
                 return self._record({"task_id": task.task_id, "type": task.task_type, "reward": task.reward,
                                      "status": "skipped_infeasible", "signals": [s.as_dict() for s in signals]})
-            # этап 0: условие целиком по шаблону — ответ кодом, 0 токенов; при любом сигнале детектора — обычный путь
-            answer = await asyncio.to_thread(self.rules.solve, task) if self.rules and not signals else None
+            # этап 0: условие целиком по шаблону — ответ кодом, 0 токенов; при сигнале детектора вне rules.soft_ok — обычный путь
+            answer = await asyncio.to_thread(self.rules.solve, task) if self.rules and self.rules.accepts(signals) else None
             if answer is not None:
                 return self._record({"task_id": task.task_id, "type": task.task_type, "reward": task.reward,
                                      "status": "verified", "answer": answer, "solved_by": "rules", "cost": 0,
