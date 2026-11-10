@@ -12,6 +12,11 @@ from harness.tasks import Task
 CSV_NAME_RE = re.compile(r"(?<![\w/.-])((?:[\w-]+/)*[\w-]+\.(?:csv|tsv))\b")
 
 
+def mentions(text: str, column: str) -> bool:
+    """Имя столбца словом в тексте: `unit_cost` — и как «unit cost»."""
+    return any(re.search(rf"\b{re.escape(name)}\b", text) for name in {column, column.replace("_", " ")})
+
+
 class DataCheck:
     def __init__(self, cfg: dict[str, Any]):
         self._declared_re = re.compile(cfg["columns_declared_re"])
@@ -40,6 +45,11 @@ class DataCheck:
             # жёстко только если инструкция сама обещает этот столбец, а в файле его нет
             severity = HARD if col in declared and not headerless else SOFT
             signals.append(Signal("missing_column", severity, f"{files[0].name} has no column {col!r}"))
+        # столбец обещан условием и назван в вопросе, а в шапке его нет — данных для ответа нет
+        if not headerless:
+            for col in sorted(declared - set(header) - set(self._triggers)):
+                if mentions(q, col):
+                    signals.append(Signal("missing_column", HARD, f"{files[0].name} has no declared column {col!r}"))
         for col, rx in self._filters.items():
             m = rx.search(question)
             if m and col in header:

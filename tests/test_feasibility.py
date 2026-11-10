@@ -108,6 +108,26 @@ class DataPairs(Base):
         task = self.make_task("data_analysis", DATA_INSTRUCTION, {"sales.csv": csv_text})
         self.assertEqual(codes(self.detector.check(task)), ["missing_column"])
 
+    EMPLOYEES = "id,name,department,salary,years\n1,Ann,sales,3000,4\n2,Bob,support,2800,2\n"
+    BONUS_DECLARED = "The file employees.csv has columns id,name,department,salary,years,bonus. "
+
+    def test_declared_column_asked_but_missing_is_hard(self):
+        # probe1 data_analysis_p06: 450 токенов на задачу без данных для ответа
+        text = self.BONUS_DECLARED + "What is the total bonus paid to the 'sales' department?"
+        task = self.make_task("data_analysis", text, {"employees.csv": self.EMPLOYEES})
+        self.assertEqual(codes(self.detector.check(task)), ["missing_column"])
+
+    def test_declared_column_missing_but_not_asked_is_not_hard(self):
+        text = self.BONUS_DECLARED + "What is the total salary of the 'sales' department?"
+        task = self.make_task("data_analysis", text, {"employees.csv": self.EMPLOYEES})
+        self.assertEqual(codes(self.detector.check(task)), [])
+
+    def test_declared_column_asked_in_headerless_csv_is_not_hard(self):
+        body = "1,Ann,sales,3000,4,100\n2,Bob,support,2800,2,50\n"
+        text = self.BONUS_DECLARED + "What is the total bonus paid to the 'sales' department?"
+        task = self.make_task("data_analysis", text, {"employees.csv": body})
+        self.assertEqual(codes(self.detector.check(task)), [])
+
     def test_missing_csv_is_hard(self):
         task = self.make_task("data_analysis", DATA_INSTRUCTION, {})
         self.assertEqual(codes(self.detector.check(task)), ["missing_file"])
