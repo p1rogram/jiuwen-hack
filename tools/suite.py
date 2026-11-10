@@ -66,9 +66,12 @@ def run_all(args: argparse.Namespace) -> None:
     for src in discover(args.sets, args.only):
         for rep in range(1, args.repeat + 1):
             run_dir = out / (src.name if args.repeat == 1 else f"{src.name}-r{rep}")
-            if run_dir.exists():
-                print(f"skip {run_dir.name}: already exists", file=sys.stderr)
+            if (run_dir / "run.json").exists():
+                print(f"skip {run_dir.name}: already done", file=sys.stderr)
                 continue
+            if run_dir.exists():
+                # прогон прервали до run.json: копия набора уже с answer.txt — начинаем заново
+                shutil.rmtree(run_dir)
             shutil.copytree(src, run_dir)
             (run_dir / "out").mkdir()
             cmd, env = harness_command(args, run_dir)
@@ -78,6 +81,10 @@ def run_all(args: argparse.Namespace) -> None:
                 code = subprocess.call(cmd, env=env, stdout=err, stderr=subprocess.STDOUT)
             meta = {"set": src.name, "repeat": rep, "mode": args.mode, "profile": args.profile,
                     "exit_code": code, "wall_sec": round(time.monotonic() - started, 1)}
+            if code != 0 and not read_log(run_dir / "out")[0]:
+                # сервер недоступен, нет модели, нет образа — остальные наборы упадут так же
+                tail = (run_dir / "stderr.txt").read_text(encoding="utf-8", errors="replace")[-1500:]
+                raise SystemExit(f"{run_dir.name}: harness exited {code} before any task:\n{tail}")
             (run_dir / "run.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
             row = score_run(run_dir)
             print(f"   {row['solved']}/{row['feasible']} solved, tokens {row['cost']}, "

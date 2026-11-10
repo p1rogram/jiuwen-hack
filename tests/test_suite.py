@@ -93,5 +93,68 @@ class SuiteScoreTest(unittest.TestCase):
             self.assertNotIn("`s_ok`", md)
 
 
+FAKE_HARNESS = """
+import json, sys
+from pathlib import Path
+run = Path(sys.argv[1])
+(run / "tasks" / "s_ok" / "answer.txt").write_text("Bergen", encoding="utf-8")
+(run / "out" / "logs").mkdir(parents=True, exist_ok=True)
+(run / "out" / "logs" / "h.jsonl").write_text(json.dumps({"kind": "task", "task_id": "s_ok", "status": "verified"}),
+                                              encoding="utf-8")
+"""
+
+
+def make_set(sets: Path) -> None:
+    d = sets / "one" / "tasks" / "s_ok"
+    d.mkdir(parents=True)
+    (d / "task.json").write_text(json.dumps({"task_id": "s_ok", "task_type": "search", "expected": "Bergen"}),
+                                 encoding="utf-8")
+
+
+class SuiteRunTest(unittest.TestCase):
+    def args(self, tmp: Path):
+        from tools.suite import parse_args
+        return parse_args(["run", "--sets", str(tmp / "sets"), "--out", str(tmp / "out")])
+
+    def test_interrupted_set_is_rerun_and_done_set_skipped(self):
+        from unittest import mock
+        import tools.suite as suite
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            make_set(tmp / "sets")
+            stale = tmp / "out" / "one" / "tasks" / "s_ok"
+            stale.mkdir(parents=True)
+            (stale / "leftover.txt").write_text("stale", encoding="utf-8")  # прерванный прогон без run.json
+            calls = []
+
+            def fake(args, run_dir):
+                calls.append(run_dir.name)
+                return [sys.executable, "-c", FAKE_HARNESS, str(run_dir)], None
+
+            with mock.patch.object(suite, "harness_command", fake), contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                suite.run_all(self.args(tmp))
+                self.assertEqual(calls, ["one"])
+                self.assertFalse((stale / "leftover.txt").exists())
+                row = suite.score_run(tmp / "out" / "one")
+                self.assertEqual((row["solved"], row["exit_code"]), (1, 0))
+                suite.run_all(self.args(tmp))
+                self.assertEqual(calls, ["one"])  # второй запуск: набор уже готов
+
+    def test_stops_when_harness_fails_before_any_task(self):
+        from unittest import mock
+        import tools.suite as suite
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            make_set(tmp / "sets")
+            cmd = [sys.executable, "-c", "import sys; print('preflight: server has no model'); sys.exit(1)"]
+            with mock.patch.object(suite, "harness_command", lambda a, r: (cmd, None)), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as ctx:
+                    suite.run_all(self.args(tmp))
+            self.assertIn("preflight: server has no model", str(ctx.exception))
+            self.assertFalse((tmp / "out" / "one" / "run.json").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
