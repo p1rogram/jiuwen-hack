@@ -1,0 +1,35 @@
+{
+  "math": {
+    "start": "^A warehouse starts with (?P<n>\\d+) (?P<unit>[a-z]+)\\.$",
+    "ops": [
+      {"re": "^It ships (?P<a>\\d+) {unit} per day for (?P<b>\\d+) days\\.$", "op": "sub_mul"},
+      {"re": "^It receives (?P<a>\\d+) deliveries of (?P<b>\\d+) {unit} each\\.$", "op": "add_mul"},
+      {"re": "^It sells (?P<a>\\d+) {unit}\\.$", "op": "sub"},
+      {"re": "^Then the stock is split equally into (?P<a>\\d+) warehouses and it keeps one share \\(rounded down\\)\\.$", "op": "floordiv"},
+      {"re": "^Then the stock is doubled by merging with a sister warehouse\\.$", "op": "double"}
+    ],
+    "question": "^How many {unit} does it have at the end\\?$"
+  },
+  "data": {
+    "intro": "^The file (?P<file>[\\w-]+\\.csv) has columns (?P<cols>[A-Za-z_]+(?:,[A-Za-z_]+)+) \\((?P<rows>\\d+) rows\\)\\.$",
+    "questions": [
+      {"re": "^How many units of product '(?P<product>[^']+)' were sold in months (?P<m1>\\d+) through (?P<m2>\\d+) inclusive\\?$", "sum": ["units"]},
+      {"re": "^How many units of product '(?P<product>[^']+)' were sold in region '(?P<region>[^']+)' in months (?P<m1>\\d+) through (?P<m2>\\d+) inclusive\\?$", "sum": ["units"]},
+      {"re": "^What was the total revenue \\(sum of units \\* price\\) of product '(?P<product>[^']+)' in months (?P<m1>\\d+) through (?P<m2>\\d+) inclusive\\?$", "sum": ["units", "price"]}
+    ],
+    "month_column": "month",
+    "filter_columns": ["product", "region"]
+  },
+  "search": {
+    "intro": "^The directory (?P<dir>[\\w-]+)/ contains a small knowledge base of markdown files\\.$",
+    "questions": [
+      {"re": "^In which year was (?P<p>[A-Z][A-Za-z' -]+?)'s mentor born\\?$", "chain": ["Mentor"], "attr": "Born", "answer": "^\\d{4}$"},
+      {"re": "^In which year was (?P<p>[A-Z][A-Za-z' -]+?)'s employer founded\\?$", "chain": ["Employer"], "attr": "Founded", "answer": "^\\d{4}$"},
+      {"re": "^In which year was (?P<p>[A-Z][A-Za-z' -]+?) born\\?$", "chain": [], "attr": "Born", "answer": "^\\d{4}$"},
+      {"re": "^In which city is the headquarters of the employer of (?P<p>[A-Z][A-Za-z' -]+?)'s mentor\\?$", "chain": ["Mentor", "Employer"], "attr": "Headquarters", "answer": "^[A-Z][\\w .'-]*$"},
+      {"re": "^In which city is the headquarters of (?P<p>[A-Z][A-Za-z' -]+?)'s employer\\?$", "chain": ["Employer"], "attr": "Headquarters", "answer": "^[A-Z][\\w .'-]*$"}
+    ],
+    "field": "^(?P<key>[A-Z][A-Za-z ]*): (?P<value>\\S.*)$",
+    "max_files": 5000
+  }
+}

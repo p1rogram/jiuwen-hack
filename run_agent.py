@@ -17,6 +17,7 @@ from harness.console import ConsoleView
 from harness.cost_model import CostModel
 from harness.decision import DecisionPolicy
 from harness.feasibility import FeasibilityDetector, Signal, blocking
+from harness.rules import RulesSolver
 from harness.llm import BudgetExhausted, LlmGateway
 from harness.outcome import Outcome
 from harness.pipeline import TaskPipeline
@@ -50,6 +51,7 @@ def parse_args() -> argparse.Namespace:
 
 class Harness:
     profile: str | None = None  # профиль стенда для run_start; тесты собирают Harness без __init__
+    rules: RulesSolver | None = None
 
     def __init__(self, settings: Settings, model: str | None, force_stage2: bool = False,
                  force_branch: str | None = None):
@@ -85,6 +87,8 @@ class Harness:
         feas = settings.section("feasibility")
         self.detector = FeasibilityDetector(load_config(feas["config_file"])) if feas["enabled"] else None
         self.skip_severities = feas["skip_severities"]
+        rules = settings.section("rules")
+        self.rules = RulesSolver(load_config(rules["config_file"])) if rules["enabled"] else None
 
     async def run(self, tasks: list[Task]) -> list[dict]:
         self.log.write({"kind": "run_start", "tasks": len(tasks), "budget": self.ledger.total,
@@ -137,6 +141,12 @@ class Harness:
             if blocking(signals, self.skip_severities):
                 return self._record({"task_id": task.task_id, "type": task.task_type, "reward": task.reward,
                                      "status": "skipped_infeasible", "signals": [s.as_dict() for s in signals]})
+            # этап 0: условие целиком по шаблону — ответ кодом, 0 токенов; при любом сигнале детектора — обычный путь
+            answer = await asyncio.to_thread(self.rules.solve, task) if self.rules and not signals else None
+            if answer is not None:
+                return self._record({"task_id": task.task_id, "type": task.task_type, "reward": task.reward,
+                                     "status": "verified", "answer": answer, "solved_by": "rules", "cost": 0,
+                                     **write_error(self.writer.record(task, answer))})
             prepared = await self.prompt.build(task)
         except Exception as exc:  # одна упавшая задача не должна валить прогон: фаза A общая для всех
             return self._record({"task_id": task.task_id, "status": "error",

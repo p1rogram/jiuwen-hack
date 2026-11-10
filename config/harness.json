@@ -63,5 +63,9 @@
     "skip_severities": ["hard"],
     "config_file": "feasibility.json"
   },
+  "rules": {
+    "enabled": true,
+    "config_file": "rules.json"
+  },
   "log_dir_default": "logs"
 }
