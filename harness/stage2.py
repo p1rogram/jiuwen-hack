@@ -19,11 +19,14 @@ from harness.patching import PatchApplier, find_patch
 from harness.prompting import Prepared, prompt_chars
 from harness.settings import load_prompt
 from harness.solver import extract_code
-from harness.verifier import NO_CODE, Verdict, Verifier
+from harness.test_output import compact_unittest
+from harness.verifier import NO_CODE, TESTS_FAIL, Verdict, Verifier
 
 FINAL_RE = re.compile(r"^\s*FINAL:\s*(.+?)\s*$", re.MULTILINE)
-# «та же ошибка» — та же строка исключения: путь кода к ней и номера строк после правки меняются
-EXC_RE = re.compile(r"^[\w.]*(?:Error|Exception|Exit|Interrupt)\b.*$", re.MULTILINE)
+# «та же ошибка» — та же строка исключения: путь кода к ней и номера строк после правки меняются.
+# Отступ допустим: сжатый вывод тестов пишет исключение с «  »; строку исходника в traceback («    raise X(...)»)
+# шаблон не берёт — [\w.]* не перескакивает пробел
+EXC_RE = re.compile(r"^[ \t]*[\w.]*(?:Error|Exception|Exit|Interrupt)\b.*$", re.MULTILINE)
 NOISE_RE = re.compile(r"0x[0-9a-fA-F]+|\s+")
 
 
@@ -62,6 +65,9 @@ class Stage2Solver:
         self._tail = int(cfg["obs_tail_chars"])
         self._start = load_prompt("stage2_start.txt")
         self._obs = load_prompt("stage2_obs.txt")
+        # провал тестов после правки — в наблюдение: иначе модель видит пустой вывод правки и подсказку FINAL
+        self._test_feedback = bool(cfg.get("test_feedback", False))
+        self._obs_tests = load_prompt("stage2_obs_tests.txt")
         self._check = load_prompt("stage2_check.txt")
         self._format = load_prompt("stage2_format.txt")
 
@@ -95,6 +101,7 @@ class Stage2Solver:
                        else await run_script(code, task.workspace, self._timeout))
                 seen_code[code.strip()] = run
                 error = run.stderr if not run.ok else ""
+                tests_failed = ""
                 if task.check == "unittest":
                     # зелёные тесты — настоящая проверка, FINAL ради неё не нужен
                     verdict = await self._verifier.check(task, run)
@@ -103,7 +110,9 @@ class Stage2Solver:
                     # шаг без правок (прочитать файл) оставляет прежний провал тестов — это не повтор ошибки
                     if workspace_state(task.workspace) != before:
                         error = error or verdict.problem
-                feedback = self._observation(run)
+                        if self._test_feedback and verdict.kind == TESTS_FAIL:
+                            tests_failed = verdict.problem
+                feedback = self._observation(run, tests_failed)
             elif final is not None:
                 verdict = await self._verifier.check(task, RunResult(0, final + "\n", "", False, time.time()))
                 if verdict.ok:
@@ -129,9 +138,15 @@ class Stage2Solver:
                 return self._stop(outcome, "repeat_answer", answered)
         return self._stop(outcome, "repeat_command", verdict)
 
-    def _observation(self, run: RunResult) -> str:
-        return self._obs.format(code=run.returncode, timeout=" (timed out)" if run.timed_out else "",
-                                stdout=run.stdout[-self._tail:] or "(empty)", stderr=run.stderr[-self._tail:] or "(empty)")
+    def _observation(self, run: RunResult, tests_failed: str = "") -> str:
+        out, err = run.stdout, run.stderr
+        if self._test_feedback:
+            out, err = compact_unittest(out), compact_unittest(err)
+        fields = {"code": run.returncode, "timeout": " (timed out)" if run.timed_out else "",
+                  "stdout": out[-self._tail:] or "(empty)", "stderr": err[-self._tail:] or "(empty)"}
+        if tests_failed:
+            return self._obs_tests.format(problem=tests_failed, **fields)
+        return self._obs.format(**fields)
 
     @staticmethod
     def _stop(outcome: Outcome, reason: str, verdict: Verdict) -> Verdict:

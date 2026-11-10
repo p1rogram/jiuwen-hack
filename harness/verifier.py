@@ -7,6 +7,7 @@ from pathlib import Path
 
 from harness.executor import RunResult, run_python
 from harness.tasks import Task
+from harness.test_output import compact_unittest
 
 # число целиком, с дробной частью: иначе из «8825.0» последним «целым» оказывается «0»
 NUM_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
@@ -38,8 +39,9 @@ def last_line(text: str) -> str:
 
 
 class Verifier:
-    def __init__(self, error_tail_chars: int, unsolvable_marker: str | None = None):
+    def __init__(self, error_tail_chars: int, unsolvable_marker: str | None = None, compact_tests: bool = False):
         self._tail = error_tail_chars
+        self._compact = compact_tests
         self._marker = unsolvable_marker.strip().upper() if unsolvable_marker else None
 
     async def check(self, task: Task, run: RunResult) -> Verdict:
@@ -90,6 +92,7 @@ class Verifier:
         for name in tests:
             res = await run_python([name], ws, 120)
             if not res.ok:
-                return Verdict(False, "DONE", f"`python3 {name}` still fails:\n{(res.stdout + res.stderr)[-self._tail:]}",
-                               TESTS_FAIL)
+                out = res.stdout + res.stderr
+                tail = (compact_unittest(out) if self._compact else out)[-self._tail:]
+                return Verdict(False, "DONE", f"`python3 {name}` still fails:\n{tail}", TESTS_FAIL)
         return Verdict(True, "DONE")

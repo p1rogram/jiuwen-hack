@@ -14,7 +14,7 @@ from harness.executor import RunResult  # noqa: E402
 from harness.llm import LlmReply  # noqa: E402
 from harness.outcome import Outcome  # noqa: E402
 from harness.prompting import Prepared  # noqa: E402
-from harness.stage2 import Stage2Solver  # noqa: E402
+from harness.stage2 import Stage2Solver, error_signature  # noqa: E402
 from harness.tasks import Task  # noqa: E402
 from harness.verifier import SCRIPT_ERROR, Verdict, Verifier  # noqa: E402
 from tests.test_decision import COST  # noqa: E402
@@ -31,10 +31,11 @@ class FakeGateway:
     """Отдаёт заготовленные ответы по очереди; каждый вызов стоит cost."""
 
     def __init__(self, replies, cost=10.0):
-        self.replies, self.cost, self.stages = list(replies), cost, []
+        self.replies, self.cost, self.stages, self.messages = list(replies), cost, [], []
 
     async def ask(self, model, messages, *, task_id, stage, max_tokens=None):
         self.stages.append(stage)
+        self.messages.append(list(messages))
         return LlmReply(self.replies.pop(0), "", Usage(100, int(self.cost), 0), self.cost, 0.0)
 
 
@@ -132,6 +133,87 @@ class Stage2Loop(unittest.TestCase):
         failed = Verdict(False, "DONE", "`python3 test_mylib.py` still fails", "tests_fail")
         v, out, gw = self.solve([code(fix)], check="unittest", failed=failed)
         self.assertEqual((v.ok, v.answer, out.stage2_stop, len(gw.stages)), (True, "DONE", "verified", 1))
+
+
+FEEDBACK_CFG = {**CFG, "test_feedback": True}
+FINAL_HINT = "If this output is the final answer"
+
+
+class TestFeedback(unittest.TestCase):
+    """specs/test-feedback/spec.md: после правки с красными тестами модель видит их провал, а не пустой вывод правки;
+    шаг без правок и задачи не на тесты — прежнее наблюдение."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.ws = Path(self.tmp.name)
+        (self.ws / "mylib.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (self.ws / "test_mylib.py").write_text(
+            "import unittest, mylib\nclass T(unittest.TestCase):\n    def test_f(self):\n"
+            "        self.assertEqual(mylib.f(), 4)\nunittest.main()\n", encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def solve(self, replies, check="unittest", cfg=FEEDBACK_CFG):
+        gw = FakeGateway(replies)
+        verifier = Verifier(500, compact_tests=True)
+        solver = Stage2Solver(gw, verifier, CostModel(COST, 0.1), "m", cfg, ["coding"])
+        task = Task("t", "coding", "", 1, check, self.ws)
+        failed = asyncio.run(verifier.check(task, RunResult(0, "", "", False, 0.0)))
+        out = Outcome("t", messages=[{"role": "user", "content": "task"}])
+        verdict = asyncio.run(solver.solve(Prepared(task, out.messages), out, failed, 10_000))
+        return verdict, gw
+
+    @staticmethod
+    def patch(value):
+        return code(f"# file: mylib.py\ndef f():\n    return {value}")
+
+    def test_patch_with_failing_tests_shows_the_failure(self):
+        v, gw = self.solve([self.patch(3), self.patch(4)])
+        feedback = gw.messages[1][-1]["content"]
+        self.assertTrue(v.ok)
+        self.assertIn("3 != 4", feedback)
+        self.assertNotIn(FINAL_HINT, feedback)
+
+    def test_patch_without_flag_keeps_old_observation(self):
+        v, gw = self.solve([self.patch(3), self.patch(4)], cfg=CFG)
+        self.assertNotIn("3 != 4", gw.messages[1][-1]["content"])
+        self.assertIn(FINAL_HINT, gw.messages[1][-1]["content"])
+
+    def test_step_without_changes_keeps_old_observation(self):
+        v, gw = self.solve([code("print(open('mylib.py').read())"), self.patch(4)])
+        feedback = gw.messages[1][-1]["content"]
+        self.assertIn(FINAL_HINT, feedback)
+        self.assertNotIn("tests still fail", feedback)
+
+    def test_non_test_task_keeps_old_observation(self):
+        v, gw = self.solve([code("print(1)"), "FINAL: 7"], check="exact_int")
+        self.assertIn(FINAL_HINT, gw.messages[1][-1]["content"])
+
+    def test_test_run_printed_by_script_is_compacted(self):
+        run_tests = ("import subprocess, sys\n"
+                     "r = subprocess.run([sys.executable, 'test_mylib.py'], capture_output=True, text=True)\n"
+                     "print(r.stderr)")
+        v, gw = self.solve([code(run_tests), self.patch(4)])
+        feedback = gw.messages[1][-1]["content"]
+        self.assertIn("AssertionError: 1 != 4", feedback)
+        self.assertNotIn("Traceback", feedback)
+
+
+class ErrorSignature(unittest.TestCase):
+    """«Та же ошибка» — та же строка исключения (комментарий EXC_RE), в сырой и в сжатой форме вывода."""
+
+    def test_compact_failure_signature_ignores_line_numbers(self):
+        a = "FAIL: test_f\n  test_mylib.py:4 in test_f: self.assertEqual(mylib.f(), 4)\n  AssertionError: 3 != 4\n"
+        b = "FAIL: test_f\n  test_mylib.py:9 in test_f: self.assertEqual(mylib.f(), 4)\n  AssertionError: 3 != 4\n"
+        c = "FAIL: test_f\n  test_mylib.py:4 in test_f: self.assertEqual(mylib.f(), 4)\n  AssertionError: 2 != 4\n"
+        self.assertEqual(error_signature(a), error_signature(b))
+        self.assertEqual(error_signature(a), "AssertionError: 3 != 4")
+        self.assertNotEqual(error_signature(a), error_signature(c))
+
+    def test_indented_source_line_is_not_an_exception(self):
+        text = 'Traceback (most recent call last):\n  File "m.py", line 3, in f\n    raise ValueError("bad")\n'
+        self.assertIn("File", error_signature(text))
 
 
 if __name__ == "__main__":

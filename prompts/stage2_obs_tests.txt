@@ -1,0 +1,7 @@
+exit code {code}{timeout}
+stdout (tail):
+{stdout}
+stderr (tail):
+{stderr}
+The files were changed, but the tests still fail:
+{problem}

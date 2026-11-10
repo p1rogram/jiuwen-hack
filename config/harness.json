@@ -31,6 +31,7 @@
     "attempts": 2,
     "script_timeout_sec": 60,
     "error_tail_chars": 1500,
+    "compact_test_output": true,
     "unsolvable_enabled": false,
     "unsolvable_marker": "UNSOLVABLE",
     "tail_prompts": {"search": "stage1_tail_search.txt", "math": "stage1_tail.txt", "data_analysis": "stage1_tail.txt"},
@@ -41,7 +42,8 @@
     "max_steps": 6,
     "max_step_tokens": 1024,
     "script_timeout_sec": 60,
-    "obs_tail_chars": 1200
+    "obs_tail_chars": 1200,
+    "test_feedback": true
   },
   "success_model_file": "success_model.json",
   "snapshot": {

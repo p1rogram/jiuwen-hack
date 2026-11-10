@@ -73,6 +73,21 @@ class FailureKinds(unittest.TestCase):
             v = self.check(Task("t", "coding", "", 1, "unittest", Path(d)), RunResult(0, "", "", False))
         self.assertEqual((v.ok, v.kind), (False, TESTS_FAIL))
 
+    def test_compact_flag_compacts_test_failure(self):
+        # specs/test-feedback/spec.md: тот же compact_unittest, что в срезе задачи; без флага — сырой хвост
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "test_x.py").write_text(
+                "import unittest\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(1, 2)\n"
+                "    def test_b(self):\n        self.assertEqual(3, 4)\nunittest.main()\n", encoding="utf-8")
+            t = Task("t", "coding", "", 1, "unittest", Path(d))
+            run = RunResult(0, "", "", False)
+            compact = asyncio.run(Verifier(2000, compact_tests=True).check(t, run)).problem
+            raw = asyncio.run(Verifier(2000).check(t, run)).problem
+        self.assertIn("AssertionError: 1 != 2", compact)
+        self.assertIn("AssertionError: 3 != 4", compact)
+        self.assertNotIn("Traceback", compact)
+        self.assertIn("Traceback", raw)
+
     def test_answer_file_written_by_this_run_is_the_answer(self):
         # повтор search_0001: скрипт записал answer.txt и ничего не напечатал — ответ есть, повтор не нужен
         # mtime на Windows отстаёт от time.time() до тика таймера (замер: до 15,7 мс) — файл этого запуска

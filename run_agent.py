@@ -65,7 +65,7 @@ class Harness:
         marker = stage1_cfg["unsolvable_marker"] if stage1_cfg["unsolvable_enabled"] else None
         self.prompt = Stage1Prompt(WorkspaceSnapshot(settings.section("snapshot")), marker, stage1_cfg["tail_prompts"],
                                    stage1_cfg["patch_types"], stage1_cfg["patch_prompts"])
-        verifier = Verifier(stage1_cfg["error_tail_chars"], marker)
+        verifier = Verifier(stage1_cfg["error_tail_chars"], marker, bool(stage1_cfg.get("compact_test_output", False)))
         models = settings.section("models")
         stage1 = Stage1Solver(gateway, self.prompt, verifier, model or models["stage1"], stage1_cfg, self.log)
         cost_model = CostModel(load_config(settings.raw["cost_model_file"]), acc["input_weight"])
