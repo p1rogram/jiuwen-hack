@@ -210,8 +210,9 @@ class Harness:
             # поправка модели расхода этапа 1 — только по его первому вызову (в --force-stage2 его нет)
             self.planner.finish(prepared, outcome.first_stage1_call())
         written = self.writer.record(task, outcome.answer) if outcome.answer else self.writer.discard(task)
-        status = "verified" if outcome.verified else "unsolvable" if outcome.failure == UNSOLVABLE else "unverified"
+        status = "submitted_unchecked" if outcome.unchecked else "verified" if outcome.verified else "unsolvable" if outcome.failure == UNSOLVABLE else "unverified"
         return self._record({**head, "status": status,
+                             **({"verification": "unavailable"} if outcome.unchecked else {}),
                              "answer": outcome.answer, "solved_by": outcome.solved_by, "attempts": outcome.attempts,
                              "cost": round(outcome.cost, 1),
                              "problem": outcome.problem[:300], "failure": outcome.failure,

@@ -104,9 +104,9 @@ class Stage2Solver:
                 tests_failed = ""
                 if task.check == "unittest":
                     # зелёные тесты — настоящая проверка, FINAL ради неё не нужен
-                    verdict = await self._verifier.check(task, run)
-                    if verdict.ok:
-                        return self._stop(outcome, "verified", verdict)
+                    verdict = await self._verifier.check(task, run, visible_tests=prepared.visible_tests, allow_unchecked=True)
+                    if verdict.accepted:
+                        return self._stop(outcome, "verified" if verdict.ok else "submitted_unchecked", verdict)
                     # шаг без правок (прочитать файл) оставляет прежний провал тестов — это не повтор ошибки
                     if workspace_state(task.workspace) != before:
                         error = error or verdict.problem
@@ -114,9 +114,9 @@ class Stage2Solver:
                             tests_failed = verdict.problem
                 feedback = self._observation(run, tests_failed)
             elif final is not None:
-                verdict = await self._verifier.check(task, RunResult(0, final + "\n", "", False, time.time()))
-                if verdict.ok:
-                    return self._stop(outcome, "verified", verdict)
+                verdict = await self._verifier.check(task, RunResult(0, final + "\n", "", False, time.time()), visible_tests=prepared.visible_tests)
+                if verdict.accepted:
+                    return self._stop(outcome, "verified" if verdict.ok else "submitted_unchecked", verdict)
                 error, feedback = verdict.problem, self._check.format(problem=verdict.problem)
             else:
                 verdict = Verdict(False, verdict.answer, "no code block and no FINAL line", NO_CODE)

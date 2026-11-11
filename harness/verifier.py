@@ -38,7 +38,13 @@ class Verdict:
     ok: bool
     answer: str
     problem: str = ""
-    kind: str = ""  # вид провала из FAILURE_KINDS; у успеха пусто
+    kind: str = ""
+    verification: str = ""
+
+    @property
+    def accepted(self) -> bool:
+        return self.ok or self.verification == "unavailable"
+
 
 
 def last_line(text: str) -> str:
@@ -54,7 +60,7 @@ class Verifier:
         self._column_probe = column_probe  # DataCheck.missing_declared; None — без остановки по KeyError
         self._marker = unsolvable_marker.strip().upper() if unsolvable_marker else None
 
-    async def check(self, task: Task, run: RunResult) -> Verdict:
+    async def check(self, task: Task, run: RunResult, *, visible_tests=None, allow_unchecked=False) -> Verdict:
         if run.timed_out:
             return Verdict(False, "", "script timed out", SCRIPT_ERROR)
         # до кода возврата: модель печатает маркер и иногда выходит с sys.exit(1)
@@ -65,6 +71,15 @@ class Verifier:
             return Verdict(False, "", problem, MISSING_COLUMN if self._missing_column(task, run.stderr) else SCRIPT_ERROR)
         kind = task.check
         if kind == "unittest":
+            if visible_tests is not None:
+                if not visible_tests:
+                    if allow_unchecked:
+                        return Verdict(False, "DONE", verification="unavailable")
+                    return Verdict(False, "", "visible tests unavailable", TESTS_FAIL)
+                for name, original in visible_tests:
+                    path = task.workspace / name
+                    if not path.is_file() or path.read_bytes() != original:
+                        return Verdict(False, "", "original tests changed or deleted", TESTS_FAIL)
             return await self._check_tests(task.workspace)
         # модель иногда только пишет answer.txt, ничего не печатая: ответ есть, повтор не нужен
         line = last_line(run.stdout) or self._answer_file(task, run.started)

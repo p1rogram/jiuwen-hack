@@ -9,6 +9,7 @@ from typing import Any
 class Outcome:
     task_id: str
     answer: str = ""
+    unchecked: bool = False
     verified: bool = False
     attempts: int = 0  # вызовы этапа 1
     cost: float = 0.0

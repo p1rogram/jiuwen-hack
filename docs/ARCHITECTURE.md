@@ -76,3 +76,6 @@
 
 ## Бюджеты
 Размер модулей держим небольшим: модуль растёт — выделяем подсистему, а не дописываем (как `harness/feasibility/`).
+
+## Кандидаты без видимых coding-тестов
+Prepared фиксирует исходные имена и содержимое test_*.py. Verifier возвращает accepted-кандидат с verification=unavailable после успешного действия, если исходного набора не было; это не ok/verified. Pipeline прекращает эскалацию и не вызывает SuccessModel.observe для unavailable. Outcome.unchecked даёт submitted_unchecked в JSONL, ответ сохраняется прежним ResultsWriter. Удаление/изменение исходных тестов — провал; FINAL без исполнения не создаёт кандидат.

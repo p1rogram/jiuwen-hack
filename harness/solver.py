@@ -49,13 +49,14 @@ class Stage1Solver:
 
     async def first(self, prepared: Prepared, outcome: Outcome) -> Verdict:
         outcome.messages = list(prepared.messages)
-        return await self._attempt(prepared.task, outcome)
+        return await self._attempt(prepared, outcome)
 
     async def retry(self, prepared: Prepared, outcome: Outcome, failed: Verdict) -> Verdict:
         outcome.messages.append(self._prompt.retry(failed.problem, prepared.task.task_type))
-        return await self._attempt(prepared.task, outcome)
+        return await self._attempt(prepared, outcome)
 
-    async def _attempt(self, task: Task, outcome: Outcome) -> Verdict:
+    async def _attempt(self, prepared: Prepared, outcome: Outcome) -> Verdict:
+        task = prepared.task
         stage = f"{self._stage}.{outcome.attempts + 1}"
         cap = self._caps.get(task.task_type)
         reply = await self._gw.ask(self._model, outcome.messages, task_id=task.task_id, stage=stage, max_tokens=cap)
@@ -74,12 +75,12 @@ class Stage1Solver:
             self._shape(task, stage, reply.text, blocks, "patch" if blocks else "script" if code is not None else "none")
         if blocks:
             outcome.applied = "patch"
-            return await self._verifier.check(task, self._patcher.apply(blocks, task.workspace))
+            return await self._verifier.check(task, self._patcher.apply(blocks, task.workspace), visible_tests=prepared.visible_tests, allow_unchecked=True)
         if code is None:
             return Verdict(False, "", "no ```python code block in the reply", NO_CODE)
         outcome.applied = "script"
         run = await run_script(code, task.workspace, self._timeout)
-        return await self._verifier.check(task, run)
+        return await self._verifier.check(task, run, visible_tests=prepared.visible_tests, allow_unchecked=True)
 
     def _shape(self, task: Task, stage: str, text: str, blocks: list | None, applied: str) -> None:
         if self._log is None:

@@ -54,10 +54,11 @@ class TaskPipeline:
         t = prepared.task.task_type
         verdict = await self._s1.first(prepared, outcome)
         self._apply(outcome, verdict, STAGE1)
-        self._success.observe(STAGE1, t, "", verdict.ok)
+        if verdict.verification != "unavailable":
+            self._success.observe(STAGE1, t, "", verdict.ok)
         allowed = self._allowed(outcome)
         # отказ модели, обрыв по потолку, отсутствующий столбец — конец задачи: ни повтора, ни этапа 2
-        while not verdict.ok and verdict.kind not in TERMINAL_KINDS and allowed:
+        while not verdict.accepted and verdict.kind not in TERMINAL_KINDS and allowed:
             lam = 0.0 if self._branch else self._lam()
             d = self._policy.branch(prepared, verdict.kind, lam, self._forced_options(allowed))
             self._decided(prepared, outcome, d, verdict.problem)
@@ -70,7 +71,8 @@ class TaskPipeline:
             else:
                 verdict = await self._s2.solve(prepared, outcome, verdict, d.budget)
                 allowed = []  # после этапа 2 веток нет
-            self._success.observe(d.choice, t, kind, verdict.ok)
+            if verdict.verification != "unavailable":
+                self._success.observe(d.choice, t, kind, verdict.ok)
             self._apply(outcome, verdict, d.choice)
         if self._review is not None and outcome.verified:
             await self._review.review(prepared, outcome)
@@ -113,8 +115,9 @@ class TaskPipeline:
             outcome.answer = verdict.answer
         if verdict.kind in TERMINAL_KINDS:
             outcome.answer = ""  # ответ прошлой попытки не сдаём: данных для ответа нет
+        outcome.unchecked = verdict.verification == "unavailable"
         outcome.verified = verdict.ok
-        outcome.problem, outcome.failure = ("", "") if verdict.ok else (verdict.problem, verdict.kind)
-        if verdict.ok:
+        outcome.problem, outcome.failure = ("", "") if verdict.accepted else (verdict.problem, verdict.kind)
+        if verdict.accepted:
             outcome.solved_by = branch
 

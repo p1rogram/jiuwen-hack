@@ -19,6 +19,11 @@ class Prepared:
     messages: list[dict[str, str]]
     signals: list[Any] = field(default_factory=list)  # soft-сигналы детектора — в журнал задачи
 
+    visible_tests: tuple[tuple[str, bytes], ...] = field(init=False, repr=False)
+
+    def __post_init__(self):
+        self.visible_tests = tuple((p.name, p.read_bytes()) for p in sorted(self.task.workspace.glob("test_*.py")))
+
     @property
     def prompt_chars(self) -> int:
         return prompt_chars(self.messages)
