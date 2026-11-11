@@ -65,6 +65,33 @@ class SuiteScoreTest(unittest.TestCase):
                 self.assertEqual(row["cost_on_infeasible"], 25.0)  # s_skip_ok 12 + s_answered_inf 13
                 self.assertEqual((row["input_tokens"], row["output_tokens"], row["llm_calls"]), (250, 25, 5))
 
+    def test_error_estimate_is_separate_and_charged_once(self):
+        # Контракт spec: ошибка 10 × 0,1 + успешный вызов 100 × 0,1 + 20 = 31.
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp) / "set"
+            write_run(run, "labels")
+            log = run / "out/logs/h.jsonl"
+            records = [
+                {"kind": "llm_attempt_error", "task_id": "s_ok", "cost": 1,
+                 "input_tokens": 10, "usage_estimated": True},
+                {"kind": "llm_call", "task_id": "s_ok", "cost": 30,
+                 "input_tokens": 100, "output_tokens": 20},
+                {"kind": "task", "task_id": "s_ok", "cost": 31, "status": "verified"},
+            ]
+            log.write_text("\n".join(map(json.dumps, records)), encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                summary = write_summary(Path(tmp))
+            row = summary["runs"][0]
+            for metrics in (row, summary["total"]):
+                self.assertEqual(metrics["cost"], 31)
+                self.assertEqual(metrics["input_tokens"], 100)
+                self.assertEqual(metrics["output_tokens"], 20)
+                self.assertEqual(metrics["llm_calls"], 1)
+                self.assertEqual(metrics["error_attempts"], 1)
+                self.assertEqual(metrics["error_input_tokens_estimated"], 10)
+                self.assertEqual(metrics["error_cost_estimated"], 1)
+            self.assertIn("оценка входа ошибок", (Path(tmp) / "summary.md").read_text(encoding="utf-8"))
+
     def test_examples_without_labels_are_all_feasible(self):
         with tempfile.TemporaryDirectory() as tmp:
             run = Path(tmp) / "examples"

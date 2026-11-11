@@ -22,7 +22,8 @@ SHAPE_KEYS = ("before_chars", "after_chars", "changed", "unchanged", "defs")
 
 def read_log(path: Path) -> dict[str, dict[str, Any]]:
     """task_id → итог задачи, сумма цены, выход stage1.1, форма ответа stage1.1."""
-    acc: dict[str, dict[str, Any]] = defaultdict(lambda: {"task": {}, "cost": 0.0, "out11": 0, "shape": None})
+    acc: dict[str, dict[str, Any]] = defaultdict(lambda: {"task": {}, "cost": 0.0, "out11": 0, "shape": None, "input_tokens": 0,
+                                                       "output_tokens": 0, "llm_calls": 0, "error_attempts": 0, "error_input_tokens_estimated": 0, "error_cost_estimated": 0.0})
     for line in path.read_text(encoding="utf-8").splitlines():
         rec = json.loads(line)
         kind, tid = rec.get("kind"), rec.get("task_id")
@@ -30,8 +31,16 @@ def read_log(path: Path) -> dict[str, dict[str, Any]]:
             acc[tid]["task"] = rec
         elif kind == "llm_call":
             acc[tid]["cost"] += rec["cost"]
+            acc[tid]["input_tokens"] += rec.get("input_tokens", 0)
+            acc[tid]["output_tokens"] += rec.get("output_tokens", 0)
+            acc[tid]["llm_calls"] += 1
             if rec.get("stage") == "stage1.1":
                 acc[tid]["out11"] += rec["output_tokens"]
+        elif kind == "llm_attempt_error":
+            acc[tid]["cost"] += rec.get("cost", 0.0)
+            acc[tid]["error_attempts"] += 1
+            acc[tid]["error_input_tokens_estimated"] += rec.get("input_tokens", 0)
+            acc[tid]["error_cost_estimated"] += rec.get("cost", 0.0)
         elif kind == "answer_shape" and rec.get("stage") == "stage1.1":
             acc[tid]["shape"] = rec
     return acc
@@ -58,6 +67,8 @@ def read_run(tasks_dir: Path, log: Path, prefix: str) -> dict[str, dict[str, Any
             "ok": ok, "first_try": ok and task.get("solved_by") == "stage1" and task.get("attempts") == 1,
             "cost": c["cost"], "out11": c["out11"], "shape": c["shape"], "variant": label.get("variant"),
             "feasible": label.get("feasible", True),
+            **{k: c[k] for k in ("input_tokens", "output_tokens", "llm_calls", "error_attempts",
+                                  "error_input_tokens_estimated", "error_cost_estimated")},
         }
     return rows
 
@@ -78,6 +89,9 @@ def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "cost": round(sum(r["cost"] for r in rows), 1), "out11_mean": round(mean(r["out11"] for r in rows), 1)
         if rows else 0.0,
     }
+    for k in ("input_tokens", "output_tokens", "llm_calls", "error_attempts",
+              "error_input_tokens_estimated", "error_cost_estimated"):
+        out[k] = round(sum(r.get(k, 0) for r in rows), 1)
     if shapes:
         out["shape"] = {k: round(mean(s.get(k, 0) for s in shapes), 1) for k in SHAPE_KEYS}
         out["shape"]["whole_file_share"] = round(sum(bool(s.get("whole_file")) for s in shapes) / len(shapes), 2)
@@ -118,6 +132,7 @@ def main(argv: list[str] | None = None) -> None:
     for arm, tasks_dir, log, prefix in a.run:
         merge_run(arms.setdefault(arm, {}), read_run(Path(tasks_dir), Path(log), prefix))
     rep = build(arms)
+    print("Cost includes estimated error input; error output and historical unlogged errors are unknown.")
     print(f"paired tasks: {rep['paired']}")
     for name, e in rep["arms"].items():
         line = (f"{name}: solved {e['solved']}/{e['feasible']} feasible ({e['tasks']} tasks), first try {e['first_try']}, cost {e['cost']:.0f}"
@@ -126,6 +141,9 @@ def main(argv: list[str] | None = None) -> None:
             line += f", cost vs base {e['cost_vs_base']:+.1%}, regressions {len(e['regressions'])}" \
                     f", improvements {len(e['improvements'])}"
         print(line)
+        print(f"  usage in/out {e['input_tokens']:g}/{e['output_tokens']:g}, calls {e['llm_calls']:g}; "
+              f"errors {e['error_attempts']:g}, estimated input {e['error_input_tokens_estimated']:g}, "
+              f"estimated cost {e['error_cost_estimated']:g}")
         for v, s in e["by_variant"].items():
             print(f"  {v:<10} solved {s['solved']}/{s['feasible']} ({s['tasks']}), first try {s['first_try']}, cost {s['cost']:.0f}")
         if "shape" in e:

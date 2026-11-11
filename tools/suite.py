@@ -94,7 +94,7 @@ def run_all(args: argparse.Namespace) -> None:
 
 def read_log(out: Path) -> tuple[dict[str, dict], dict[str, dict]]:
     tasks: dict[str, dict] = {}
-    calls: dict[str, dict] = defaultdict(lambda: {"cost": 0.0, "in": 0, "out": 0, "n": 0})
+    calls: dict[str, dict] = defaultdict(lambda: {"cost": 0.0, "in": 0, "out": 0, "n": 0, "error_attempts": 0, "error_input_tokens_estimated": 0, "error_cost_estimated": 0.0})
     for log in sorted((out / "logs").glob("*.jsonl")):
         for line in log.read_text(encoding="utf-8").splitlines():
             rec = json.loads(line)
@@ -106,6 +106,12 @@ def read_log(out: Path) -> tuple[dict[str, dict], dict[str, dict]]:
                 c["in"] += rec.get("input_tokens", 0)
                 c["out"] += rec.get("output_tokens", 0)
                 c["n"] += 1
+            elif rec.get("kind") == "llm_attempt_error":
+                c = calls[rec.get("task_id", "?")]
+                c["cost"] += rec.get("cost", 0.0)
+                c["error_attempts"] += 1
+                c["error_input_tokens_estimated"] += rec.get("input_tokens", 0)
+                c["error_cost_estimated"] += rec.get("cost", 0.0)
     return tasks, calls
 
 
@@ -152,13 +158,14 @@ def score_run(run_dir: Path) -> dict:
         rec = tasks.get(data["task_id"], {})
         status = rec.get("status", "missing")
         v, answer, feasible = task_verdict(kind, ref, tj.parent, data, status)
-        c = calls.get(data["task_id"], {"cost": 0.0, "in": 0, "out": 0, "n": 0})
+        c = calls.get(data["task_id"], {"cost": 0.0, "in": 0, "out": 0, "n": 0, "error_attempts": 0, "error_input_tokens_estimated": 0, "error_cost_estimated": 0.0})
         expected = ref.get(data["task_id"], {}).get("expected", data.get("expected"))
         rows.append({"task_id": data["task_id"], "type": data.get("task_type", "?"),
                      "reward": float(data.get("reward", 1)), "feasible": feasible, "verdict": v,
                      "answer": answer, "expected": expected, "status": status,
                      "failure": rec.get("failure", ""), "solved_by": rec.get("solved_by", ""),
-                     "cost": round(c["cost"], 1), "in": c["in"], "out": c["out"], "calls": c["n"]})
+                     "cost": round(c["cost"], 1), "in": c["in"], "out": c["out"], "calls": c["n"],
+                     **{k: c[k] for k in ("error_attempts", "error_input_tokens_estimated", "error_cost_estimated")}})
     meta_file = run_dir / "run.json"
     meta = json.loads(meta_file.read_text(encoding="utf-8")) if meta_file.exists() else {}
     by_type = {}
@@ -172,6 +179,7 @@ def score_run(run_dir: Path) -> dict:
             "reward": sum(r["reward"] for r in rows if r["verdict"] == OK),
             "reward_max": sum(r["reward"] for r in feasible),
             "cost": round(sum(r["cost"] for r in rows), 1), "input_tokens": sum(r["in"] for r in rows),
+            **{k: sum(r[k] for r in rows) for k in ("error_attempts", "error_input_tokens_estimated", "error_cost_estimated")},
             "output_tokens": sum(r["out"] for r in rows), "llm_calls": sum(r["calls"] for r in rows),
             "cost_on_infeasible": round(sum(r["cost"] for r in rows if not r["feasible"]), 1),
             "verdicts": dict(Counter(r["verdict"] for r in rows)),
@@ -183,7 +191,8 @@ def score_run(run_dir: Path) -> dict:
 def write_summary(out: Path) -> dict:
     runs = [score_run(d) for d in sorted(out.iterdir()) if (d / "tasks").is_dir() and (d / "out").is_dir()]
     total = {k: round(sum(r[k] for r in runs), 1) for k in ("tasks", "feasible", "solved", "reward", "reward_max",
-                                                              "cost", "input_tokens", "output_tokens", "llm_calls")}
+                                                              "cost", "input_tokens", "output_tokens", "llm_calls",
+                                                              "error_attempts", "error_input_tokens_estimated", "error_cost_estimated")}
     summary = {"generated": time.strftime("%Y-%m-%d %H:%M:%S"), "total": total, "runs": runs}
     (out / "summary.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False), encoding="utf-8")
     md = render(summary)

@@ -15,11 +15,14 @@ def render(summary: dict) -> str:
              f"Итого: решено **{t['solved']:g}/{t['feasible']:g}** выполнимых ({pct(t['solved'], t['feasible'])}), "
              f"баллы {t['reward']:g}/{t['reward_max']:g}, токены (выход + 0,1·вход) {t['cost']:g}, "
              f"вызовов модели {t['llm_calls']:g}.", "",
-             "| Прогон | Решено | Баллы | Токены | Вход / выход | Вызовы | На невыполнимые | Время, с | Код |",
-             "|---|---|---|---|---|---|---|---|---|"]
+             "В цене учтена оценка входа ошибок; выход ошибок неизвестен. Usage вход/выход — успешные вызовы. "
+             "В старых логах без llm_attempt_error расход ошибок неизвестен.", "",
+             "| Прогон | Решено | Баллы | Токены | Вход / выход | Вызовы | Ошибки: попытки / оценка входа / цена | На невыполнимые | Время, с | Код |",
+             "|---|---|---|---|---|---|---|---|---|---|"]
     for r in summary["runs"]:
         lines.append(f"| {r['run']} | {r['solved']}/{r['feasible']} | {r['reward']:g}/{r['reward_max']:g} | {r['cost']:g} "
-                     f"| {r['input_tokens']} / {r['output_tokens']} | {r['llm_calls']} | {r['cost_on_infeasible']:g} "
+                     f"| {r['input_tokens']} / {r['output_tokens']} | {r['llm_calls']} | {r.get('error_attempts', 0)} / "
+                     f"{r.get('error_input_tokens_estimated', 0)} / {r.get('error_cost_estimated', 0):g} | {r['cost_on_infeasible']:g} "
                      f"| {r['wall_sec'] if r['wall_sec'] is not None else '—'} | {r['exit_code'] if r['exit_code'] is not None else '—'} |")
     lines += ["", "## По типам", "", "| Прогон | " + " | ".join(TYPES) + " |",
               "|---|---|---|---|---|"]

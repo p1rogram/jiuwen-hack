@@ -64,6 +64,25 @@ class AbReport(unittest.TestCase):
     def report(self):
         return build({"A": read_run(*self.a, "-"), "B": read_run(*self.b, "-")})
 
+    def test_error_estimate_is_separate_and_charged_once(self):
+        records = [
+            {"kind": "llm_attempt_error", "task_id": "c1", "cost": 1,
+             "input_tokens": 10, "usage_estimated": True},
+            {"kind": "llm_call", "task_id": "c1", "stage": "stage1.1", "cost": 30,
+             "input_tokens": 100, "output_tokens": 20},
+            {**task("c1"), "cost": 31},
+        ]
+        run = make_run(Path(self.tmp.name) / "errors", {"c1": "ok"}, records)
+        report = build({"A": read_run(*run, "-")})["arms"]["A"]
+        self.assertEqual(report["cost"], 31)
+        self.assertEqual(report["input_tokens"], 100)
+        self.assertEqual(report["output_tokens"], 20)
+        self.assertEqual(report["llm_calls"], 1)
+        self.assertEqual(report["error_attempts"], 1)
+        self.assertEqual(report["error_input_tokens_estimated"], 10)
+        self.assertEqual(report["error_cost_estimated"], 1)
+        self.assertEqual(report["out11_mean"], 20)
+
     def test_paired_totals(self):
         rep = self.report()
         self.assertEqual(rep["paired"], 3)
