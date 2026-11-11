@@ -41,6 +41,7 @@
     "unsolvable_enabled": false,
     "unsolvable_marker": "UNSOLVABLE",
     "tail_prompts": {"search": "stage1_tail_search.txt", "math": "stage1_tail.txt", "data_analysis": "stage1_tail.txt"},
+    "system_prompts": {"math": "system_task_short.txt", "data_analysis": "system_task_short.txt", "search": "system_task_short.txt"},
     "patch_types": ["coding"],
     "patch_prompts": {"system": "system_patch.txt", "retry": "stage1_retry_patch.txt"}
   },

@@ -1,0 +1,1 @@
+Solve using one Python 3 script. Reply only with a single python code block. It runs in the task directory without network. Read supplied files as needed. Print only the bare final answer as the last stdout line.

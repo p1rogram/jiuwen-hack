@@ -32,12 +32,13 @@ class Prepared:
 class Stage1Prompt:
     def __init__(self, snapshot: WorkspaceSnapshot, unsolvable_marker: str | None = None,
                  tail_prompts: dict[str, str] | None = None, patch_types: list[str] | None = None,
-                 patch_prompts: dict[str, str] | None = None):
+                 patch_prompts: dict[str, str] | None = None, system_prompts: dict[str, str] | None = None):
         self._snapshot = snapshot
         # правило формы ответа — в конце сообщения задачи: из системного промпта модель его не выполняет (замер 2026-11-09)
         self._tails = {t: load_prompt(name).strip() for t, name in (tail_prompts or {}).items()}
         rule = load_prompt("system_unsolvable.txt").format(marker=unsolvable_marker) if unsolvable_marker else ""
         self._system = self._with_rule(load_prompt("system.txt"), rule)
+        self._systems = {t: self._with_rule(load_prompt(name), rule) for t, name in (system_prompts or {}).items()}
         self._retry_tpl = load_prompt("stage1_retry.txt")
         # типы с ответом-правкой (только изменённые функции, вклейку делает харнесс): свои система и повтор
         self._patch_types = set(patch_types or [])
@@ -59,7 +60,7 @@ class Stage1Prompt:
         tail = self._tails.get(task.task_type)
         if tail:
             user = user.rstrip() + "\n\n" + tail
-        system = self._patch_system if self.is_patch(task.task_type) else self._system
+        system = self._patch_system if self.is_patch(task.task_type) else self._systems.get(task.task_type, self._system)
         return Prepared(task, [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
