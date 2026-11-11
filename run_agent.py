@@ -69,7 +69,7 @@ class Harness:
         stage1_cfg = settings.section("stage1")
         marker = stage1_cfg["unsolvable_marker"] if stage1_cfg["unsolvable_enabled"] else None
         self.prompt = Stage1Prompt(WorkspaceSnapshot(settings.section("snapshot")), marker, stage1_cfg["tail_prompts"],
-                                   stage1_cfg["patch_types"], stage1_cfg["patch_prompts"], stage1_cfg.get("system_prompts"))
+                                   stage1_cfg["patch_types"], stage1_cfg["patch_prompts"])
         feas = settings.section("feasibility")
         self.detector = FeasibilityDetector(load_config(feas["config_file"])) if feas["enabled"] else None
         self.skip_severities = feas["skip_severities"]
