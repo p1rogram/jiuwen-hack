@@ -8,28 +8,33 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-import subprocess
-import sys
+import asyncio
+import logging
 import tempfile
 from collections import defaultdict
 from pathlib import Path
 
+from harness.test_runner import run_tests
 
-def tests_pass(ws: Path, hidden: Path | None) -> tuple[bool, bool]:
+
+def tests_pass(ws: Path, hidden: Path | None, *, require_hidden: bool = False, timeout_sec: float = 60) -> tuple[bool, bool]:
     """(видимые, скрытые) на копии workspace: проверка не должна менять папку задачи."""
     tmp = Path(tempfile.mkdtemp())
     try:
         work = tmp / "ws"
         shutil.copytree(ws, work)
 
-        def ok(name: str) -> bool:
-            return subprocess.run([sys.executable, name], cwd=work, capture_output=True, timeout=60).returncode == 0
+        def ok(pattern: str) -> bool:
+            result = asyncio.run(run_tests(work, pattern, timeout_sec))
+            if not result.ok:
+                logging.getLogger(__name__).debug("%s: %s", pattern, result.stderr)
+            return result.ok
 
-        visible = all(ok(t.name) for t in sorted(work.glob("test_*.py")))
+        visible = ok("test_*.py")
         if hidden is None or not hidden.exists():
-            return visible, True
-        shutil.copy(hidden, work / "test_hidden.py")
-        return visible, ok("test_hidden.py")
+            return visible, not require_hidden
+        shutil.copy(hidden, work / "_holdout_hidden_test.py")
+        return visible, ok("_holdout_hidden_test.py")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -50,7 +55,7 @@ def verdict(root: Path, task_id: str, exp: dict) -> tuple[str, str | None]:
         return ("SKIP-OK" if answer is None else "ANSWERED-INFEASIBLE"), answer
     if exp["type"] == "coding":
         hidden = root.parent / f"{root.name}-hidden" / task_id / "test_hidden.py"
-        visible, hid = tests_pass(root / task_id / "workspace", hidden)
+        visible, hid = tests_pass(root / task_id / "workspace", hidden, require_hidden=exp.get("require_hidden", False))
         return ("OK" if visible and hid else "VISIBLE-ONLY" if visible else "FAIL"), answer
     ok = answer is not None and answer.lower() == str(exp["expected"]).strip().lower()
     return ("OK" if ok else "WRONG"), answer
