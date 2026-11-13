@@ -1,0 +1,1 @@
+Return one compact JSON object following the search protocol. No code, FINAL, or text outside JSON. Fix this issue: {problem}

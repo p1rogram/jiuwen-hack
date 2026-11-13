@@ -11,6 +11,11 @@ class Outcome:
     answer: str = ""
     unchecked: bool = False
     verified: bool = False
+    accepted: bool = False
+    verification: str = ''
+    recovery_count: int = 0
+    protocol_repairs: int = 0
+    limit_reason: str = ''
     attempts: int = 0  # вызовы этапа 1
     cost: float = 0.0
     problem: str = ""
@@ -27,7 +32,8 @@ class Outcome:
     def add_call(self, model: str, stage: str, reply: Any) -> None:
         self.cost += reply.cost
         self.calls.append({"model": model, "stage": stage, "in": reply.usage.input_tokens,
-                           "out": reply.usage.output_tokens, "reasoning": reply.usage.reasoning_tokens})
+                           "out": reply.usage.output_tokens, "reasoning": reply.usage.reasoning_tokens,
+                           'finish_reason': getattr(reply, 'finish_reason', None)})
 
     def first_stage1_call(self) -> dict[str, Any] | None:
         """Сырьё поправки модели расхода этапа 1; в --force-stage2 этапа 1 нет — None."""

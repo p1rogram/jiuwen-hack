@@ -31,6 +31,8 @@ def _add(counts: Counts, branch: str, key: str, ok: bool) -> None:
 
 def branch_outcomes(rec: dict) -> list[tuple[str, str, bool]]:
     """(ветка, ключ, успех) по итогу задачи. Журналы до этапа 2 (без solved_by): успех этапа 1 — одна попытка."""
+    if rec.get('type') == 'search':
+        return []  # Без внешнего oracle поисковые статусы не являются разметкой истинности.
     if rec.get("status") not in ("verified", "unverified"):
         return []
     t, verified = rec.get("type", ""), rec["status"] == "verified"

@@ -13,6 +13,8 @@ import harness.jiuwen_logging  # noqa: F401  — до openjiuwen: тихая к�
 from openjiuwen.core.foundation.llm import Model, ModelClientConfig, ModelRequestConfig
 
 from harness.attempt_cost import charge_failed_attempt
+from harness.attempt_trace import AttemptTrace
+from harness.cooldown import SharedCooldown
 from harness.budget import BudgetLedger, TokenPricing, Usage
 from harness.calllog import JsonlLog
 from harness.model_call import BudgetExhausted, ModelCall, ModelCallHooks, admit, settle
@@ -28,6 +30,7 @@ class LlmReply:
     usage: Usage
     cost: float
     latency_sec: float
+    finish_reason: str | None = None
 
 
 class LlmGateway:
@@ -48,6 +51,7 @@ class LlmGateway:
         self._missing_cpt = missing_usage_chars_per_token
         # прокси NeuralDeep: не более 3 параллельных запросов на ключ, иначе 429
         self._inflight = asyncio.Semaphore(int(llm_cfg["max_inflight"]))
+        self._cooldown = SharedCooldown(bool(llm_cfg.get("shared_429_cooldown", False)))
         self._retries = int(llm_cfg["rate_limit_retries"])
         self._wait_min, self._wait_max = llm_cfg["rate_limit_wait_sec"]
         # Повторяем обрыв и 5xx; вход каждой ошибки оцениваем отдельно, таймаут не повторяем.
@@ -61,11 +65,14 @@ class LlmGateway:
         if "429" not in error:
             return None
         m = RESET_RE.search(error)
+        wait = self._wait_min
         if m:
-            reset = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-            wait = (reset - datetime.now(timezone.utc)).total_seconds() + 0.5
-        else:
-            wait = self._wait_min
+            try:
+                reset = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                wait = (reset - datetime.now(timezone.utc)).total_seconds() + 0.5
+            except ValueError:
+                # Некорректная дата провайдера не должна обходить списание ошибочной попытки.
+                pass
         return min(max(wait, self._wait_min), self._wait_max)
 
     def _is_network_error(self, error: str) -> bool:
@@ -74,15 +81,21 @@ class LlmGateway:
     async def _invoke(self, model: str, messages: list[dict[str, str]], max_tokens: int, call: ModelCall):
         # 429: повтор только после времени сброса — частые повторы прокси увеличивают паузу.
         rate_limited = net_failed = attempt = 0
+        trace = AttemptTrace(self._log, call, self._cooldown.clock)
         while True:
-            async with self._inflight:
+            async with self._cooldown.slot(self._inflight) as waited:
                 client = self._model(model)
                 extra = self._extra_body(model)
                 admit(call, self._ledger)
                 attempt += 1
+                trace.start(attempt, waited, self._cooldown.deadline)
                 try:
-                    return await client.invoke(messages, max_tokens=max_tokens, **extra)
+                    reply = await client.invoke(messages, max_tokens=max_tokens, **extra)
                 except (Exception, asyncio.CancelledError) as exc:
+                    wait = None if isinstance(exc, asyncio.CancelledError) else self._rate_limit_wait(str(exc))
+                    if wait is not None:
+                        self._cooldown.extend(wait)
+                    trace.finish(type(exc).__name__, wait, self._cooldown.deadline)
                     try:
                         charge_failed_attempt(call, attempt, self._missing_cpt,
                                               self._pricing, self._ledger, self._log)
@@ -93,6 +106,9 @@ class LlmGateway:
                     if isinstance(exc, asyncio.CancelledError):
                         raise
                     failure = exc
+                else:
+                    trace.finish(deadline=self._cooldown.deadline)
+                    return reply
             error = str(failure)
             wait = self._rate_limit_wait(error)
             if wait is not None and rate_limited < self._retries:
@@ -108,7 +124,7 @@ class LlmGateway:
                 raise failure
             if self._ledger.remaining <= 0:
                 raise BudgetExhausted("budget exhausted") from failure
-            await asyncio.sleep(wait)
+            await self._cooldown.sleep(wait)
 
     def served_name(self, name: str) -> str:
         return self._model_map.get(name, {}).get("model", name)
@@ -165,7 +181,8 @@ class LlmGateway:
         reasoning = msg.reasoning_content or ""
         usage, missing = self._usage(msg.usage_metadata, messages, text, reasoning)
         cost = self._pricing.cost(usage)
-        reply = LlmReply(text=text, reasoning=reasoning, usage=usage, cost=cost, latency_sec=latency)
+        reply = LlmReply(text=text, reasoning=reasoning, usage=usage, cost=cost, latency_sec=latency,
+                         finish_reason=getattr(msg, 'finish_reason', None))
         call.response, call.usage, call.cost, call.latency_sec = reply, usage, cost, latency
         call.reasoning_chars, call.content_chars, call.usage_missing = len(reasoning), len(text), missing
         await self._fire("after_model_call", call)

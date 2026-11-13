@@ -122,18 +122,18 @@ class ApiKeyTest(unittest.TestCase):
 
 
 class BudgetEnvTest(unittest.TestCase):
-    """Аудит edc1c14, A9: BUDGET в окружении в любом привычном виде; неразборчивое — умолчание, а не падение."""
+    """Аудит edc1c14, A9: BUDGET в окружении в любом привычном виде; некорректное значение останавливает запуск (контракт 13.11)."""
 
     def test_common_spellings(self):
         for raw in ("100000", "100 000", "100_000", "100,000", "100k", "100K", " 100000 "):
             with self.subTest(raw):
                 self.assertEqual(settings.parse_budget(raw, 5.0), 100_000.0)
 
-    def test_garbage_falls_back_to_default(self):
-        for raw in ("lots", "-5", "0", "nan", "inf"):
-            with self.subTest(raw), contextlib.redirect_stderr(io.StringIO()) as err:
-                self.assertEqual(settings.parse_budget(raw, 5.0), 5.0)
-                self.assertIn("BUDGET", err.getvalue())
+    def test_invalid_budget_fails_closed(self):
+        for raw in ("lots", "-5", "nan", "inf"):
+            with self.subTest(raw), self.assertRaises(SystemExit):
+                settings.parse_budget(raw, 5.0)
+
 
 
 if __name__ == "__main__":

@@ -1,0 +1,15 @@
+{
+  "search_retrieval": {
+    "enabled": true
+  },
+  "search_evidence": {
+    "enabled": true
+  },
+  "bounded_recovery": {
+    "enabled": false
+  },
+  "llm": {
+    "max_inflight": 3,
+    "shared_429_cooldown": false
+  }
+}

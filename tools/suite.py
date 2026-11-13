@@ -48,14 +48,14 @@ def harness_command(args: argparse.Namespace, run_dir: Path) -> tuple[list[str],
         if args.profile:
             cmd += ["--profile", args.profile]
         env = dict(os.environ, HARNESS_LOG_DIR=str(run_dir / "out" / "logs"), OUT=str(run_dir / "out" / "answers.json"))
-        if args.budget:
+        if args.budget is not None:
             env["BUDGET"] = str(args.budget)
         return cmd, env
     cmd = [sys.executable, str(ROOT / "tools" / "docker_run.py"), str(tasks), str(run_dir / "out"),
            "--runtime", args.mode, "--image", args.image]
     if args.profile:
         cmd += ["--profile", args.profile]
-    if args.budget:
+    if args.budget is not None:
         cmd += ["--budget", str(args.budget)]
     return cmd, dict(os.environ)
 

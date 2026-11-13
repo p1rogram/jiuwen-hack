@@ -1,7 +1,19 @@
 {
   "llm_base_url_default": "https://api.neuraldeep.ru/v1",
-  "api_key_env_names": ["LLM_API_KEY", "NEURALDEEP_API_KEY", "OPENAI_API_KEY", "API_KEY"],
-  "base_url_env_names": ["LLM_BASE_URL", "NEURALDEEP_BASE_URL", "OPENAI_BASE_URL", "BASE_URL", "API_BASE", "API_URL"],
+  "api_key_env_names": [
+    "LLM_API_KEY",
+    "NEURALDEEP_API_KEY",
+    "OPENAI_API_KEY",
+    "API_KEY"
+  ],
+  "base_url_env_names": [
+    "LLM_BASE_URL",
+    "NEURALDEEP_BASE_URL",
+    "OPENAI_BASE_URL",
+    "BASE_URL",
+    "API_BASE",
+    "API_URL"
+  ],
   "api_key_optional": false,
   "agent": {
     "id": "jiuwen-harness",
@@ -9,7 +21,12 @@
     "description": "Solves coding, math, data_analysis and search tasks from a tasks directory within a shared token budget"
   },
   "models": {
-    "all": ["qwen3.8-27b", "qwen3.8-27b-noreason", "qwen3.6-35b-a3b", "qwen3.6-35b-a3b-noreason"],
+    "all": [
+      "qwen3.8-27b",
+      "qwen3.8-27b-noreason",
+      "qwen3.6-35b-a3b",
+      "qwen3.6-35b-a3b-noreason"
+    ],
     "stage1": "qwen3.6-35b-a3b-noreason",
     "stage2": "qwen3.6-35b-a3b-noreason"
   },
@@ -27,22 +44,43 @@
     "timeout_sec": 180,
     "max_inflight": 3,
     "rate_limit_retries": 3,
-    "rate_limit_wait_sec": [2, 30],
+    "shared_429_cooldown": false,
+    "rate_limit_wait_sec": [
+      2,
+      30
+    ],
     "network_retries": 2,
     "network_retry_wait_sec": 5,
-    "network_error_markers": ["APIConnectionError", "InternalServerError"]
+    "network_error_markers": [
+      "APIConnectionError",
+      "InternalServerError"
+    ]
   },
   "stage1": {
     "attempts": 2,
-    "max_output_tokens": {"math": 400, "data_analysis": 1024, "search": 1024, "coding": 1024},
+    "max_output_tokens": {
+      "math": 400,
+      "data_analysis": 1024,
+      "search": 1024,
+      "coding": 1024
+    },
     "script_timeout_sec": 60,
     "error_tail_chars": 1500,
     "compact_test_output": true,
     "unsolvable_enabled": false,
     "unsolvable_marker": "UNSOLVABLE",
-    "tail_prompts": {"search": "stage1_tail_search.txt", "math": "stage1_tail.txt", "data_analysis": "stage1_tail.txt"},
-    "patch_types": ["coding"],
-    "patch_prompts": {"system": "system_patch.txt", "retry": "stage1_retry_patch.txt"}
+    "tail_prompts": {
+      "search": "stage1_tail_search.txt",
+      "math": "stage1_tail.txt",
+      "data_analysis": "stage1_tail.txt"
+    },
+    "patch_types": [
+      "coding"
+    ],
+    "patch_prompts": {
+      "system": "system_patch.txt",
+      "retry": "stage1_retry_patch.txt"
+    }
   },
   "stage2": {
     "max_steps": 6,
@@ -53,7 +91,11 @@
   },
   "crosscheck": {
     "enabled": false,
-    "types": ["math", "data_analysis", "search"],
+    "types": [
+      "math",
+      "data_analysis",
+      "search"
+    ],
     "second_model": "qwen3.8-27b-noreason",
     "arbiter_model": "qwen3.6-35b-a3b",
     "min_available_tokens": 15000
@@ -75,12 +117,33 @@
   "cost_model_file": "cost_model.json",
   "feasibility": {
     "enabled": true,
-    "skip_severities": ["hard"],
+    "skip_severities": [
+      "hard"
+    ],
     "config_file": "feasibility.json"
   },
   "rules": {
     "enabled": true,
     "config_file": "rules.json"
   },
-  "log_dir_default": "logs"
+  "log_dir_default": "logs",
+  "search_retrieval": {
+    "enabled": false,
+    "scan_files": 1000,
+    "scan_bytes": 8388608,
+    "manifest_page_files": 100,
+    "read_max_lines": 80,
+    "tool_response_chars": 6000,
+    "query_chars": 256,
+    "answer_chars": 2000,
+    "reason_chars": 1000,
+    "evidence_items": 16,
+    "alternatives_items": 16
+  },
+  "search_evidence": {
+    "enabled": false
+  },
+  "bounded_recovery": {
+    "enabled": false
+  }
 }

@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from harness.settings import NO_KEY_PLACEHOLDER, Settings, load_settings  # noqa: E402
+from harness.settings import parse_budget, NO_KEY_PLACEHOLDER, Settings, load_settings  # noqa: E402
 from tools.probe_server import ProbeError, list_models  # noqa: E402
 
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
@@ -43,8 +43,7 @@ def container_env(s: Settings, budget: str | None) -> dict[str, str]:
     env = {"LLM_API_KEY": s.api_key, "LLM_BASE_URL": s.base_url}
     if s.profile:
         env["HARNESS_PROFILE"] = s.profile
-    if budget:
-        env["BUDGET"] = str(budget)
+    env["BUDGET"] = format(parse_budget(budget, s.budget), ".17g")
     return env
 
 
@@ -93,7 +92,8 @@ def preflight(s: Settings) -> None:
 
 def main() -> None:
     args = parse_args()
-    s = load_settings(profile=args.profile)
+    s = load_settings(budget=parse_budget(args.budget, 0) if args.budget is not None else None,
+                      profile=args.profile)
     if s.profile and not args.no_preflight:
         preflight(s)
     args.out_dir.mkdir(parents=True, exist_ok=True)

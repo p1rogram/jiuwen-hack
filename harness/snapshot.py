@@ -17,6 +17,7 @@ TEXT_SUFFIXES = {".py", ".md", ".txt", ".csv", ".json", ".tsv", ".yaml", ".yml"}
 
 class WorkspaceSnapshot:
     def __init__(self, cfg: dict[str, Any]):
+        self.search_cfg = cfg.get('search_retrieval', {})
         self._max_file = cfg["max_file_chars"]
         self._max_total = cfg["max_total_chars"]
         self._csv_rows = cfg["csv_sample_rows"]
@@ -29,6 +30,8 @@ class WorkspaceSnapshot:
         self._trim_note = cfg.get("passing_tests_note") if cfg.get("trim_passing_tests", False) else None
 
     async def build(self, task: Task) -> str:
+        if task.task_type == 'search' and self.search_cfg.get('enabled', False):
+            return self.search_context(task).snapshot(task.instruction, self.search_snapshot_cfg())
         ws = task.workspace
         files = self._list_files(ws)
         if not files:
@@ -55,6 +58,16 @@ class WorkspaceSnapshot:
             parts.append(block)
             budget -= len(block)
         return "\n".join(parts)
+
+    def search_snapshot_cfg(self) -> dict:
+        return dict(max_file_chars=self._max_file, max_total_chars=self._max_total)
+
+    def search_context(self, task: Task):
+        from harness.search_access import SearchAccess
+        from harness.search_config import LIMITS
+        from harness.search_corpus import SearchCorpus
+        cfg = LIMITS | self.search_cfg
+        return SearchAccess(SearchCorpus.scan(task.workspace, cfg), cfg)
 
     @staticmethod
     def _list_files(ws: Path) -> list[Path]:

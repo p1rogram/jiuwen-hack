@@ -52,7 +52,11 @@ class Stage1Solver:
         return await self._attempt(prepared, outcome)
 
     async def retry(self, prepared: Prepared, outcome: Outcome, failed: Verdict) -> Verdict:
-        outcome.messages.append(self._prompt.retry(failed.problem, prepared.task.task_type))
+        if prepared.search and prepared.search.evidence_enabled:
+            from harness.search_flow import repair_verdict
+            outcome.messages.append(repair_verdict(failed))
+        else:
+            outcome.messages.append(self._prompt.retry(failed.problem, prepared.task.task_type))
         return await self._attempt(prepared, outcome)
 
     async def _attempt(self, prepared: Prepared, outcome: Outcome) -> Verdict:
@@ -63,7 +67,22 @@ class Stage1Solver:
         outcome.attempts += 1
         outcome.add_call(self._model, stage, reply)
         outcome.messages.append({"role": "assistant", "content": reply.text})
-        if cap is not None and reply.usage.output_tokens >= cap:
+        if prepared.bounded_recovery:
+            from harness.search_flow import truncated
+            if truncated(reply, cap):
+                outcome.limit_reason = 'confirmed_length' if getattr(reply, 'finish_reason', None) == 'length' else 'suspected_limit'
+                return Verdict(False, '', 'output limit; return a compact complete response', TRUNCATED)
+        if prepared.search and prepared.search.evidence_enabled:
+            from harness.search_answer import evaluate
+            from harness.search_flow import truncated
+            if truncated(reply, cap):
+                outcome.limit_reason = 'confirmed_length' if getattr(reply, 'finish_reason', None) == 'length' else 'suspected_limit'
+                return Verdict(False, '', 'output limit; return compact search JSON', TRUNCATED)
+            from harness.search_diagnostics import record_rejection
+            verdict = evaluate(reply.text, prepared.search)[0]
+            record_rejection(self._log, prepared, outcome, reply, stage, verdict)
+            return verdict
+        if not prepared.bounded_recovery and cap is not None and reply.usage.output_tokens >= cap:
             # не исполнять обрезанный ответ: в нём догадка вместо данных, а этап 2 на таких задачах не помогал
             return Verdict(False, "", f"reply hit the {cap}-token output cap", TRUNCATED)
         # правка (блоки с `# file:` или одни функции модуля) — только у типов patch_types; иной ответ — как скрипт

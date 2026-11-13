@@ -17,15 +17,24 @@ class SearchRules:
                            for q in cfg["questions"]]
         self._field = re.compile(cfg["field"])
         self._max_files = int(cfg["max_files"])
+        self._known_fields = {q['attr'] for q in cfg['questions']} | {field for q in cfg['questions'] for field in q['chain']}
 
-    def solve(self, task: Task) -> str | None:
+    def solve(self, task: Task, corpus=None) -> str | None:
         parts = split_question(task.instruction, self._tail)
         if parts is None or len(parts[0]) != 1:
             return None
         intro = self._intro.match(parts[0][0])
         if not intro:
             return None
-        cards = self._cards(task.workspace / intro.group("dir"))
+        if corpus is None:
+            cards = self._cards(task.workspace / intro.group("dir"))
+        else:
+            prefix = intro.group('dir') + '/'
+            if not corpus.complete or not corpus.documents or len(corpus.documents) > self._max_files:
+                return None
+            if any(not d.path.startswith(prefix) or not d.path.endswith('.md') for d in corpus.documents):
+                return None
+            cards = self._parse_cards([d.text for d in corpus.documents], strict=True)
         if cards is None:
             return None
         for rx, chain, attr, answer in self._questions:
@@ -54,8 +63,12 @@ class SearchRules:
         if not files or len(files) > self._max_files or any(not f.is_file() or f.suffix != ".md" for f in files):
             return None
         cards: dict[str, dict[str, str]] = {}
-        for path in files:
-            lines = [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines()]
+        return self._parse_cards([p.read_text(encoding='utf-8') for p in files])
+
+    def _parse_cards(self, texts: list[str], strict: bool = False) -> dict[str, dict[str, str]] | None:
+        cards = {}
+        for text in texts:
+            lines = [ln.strip() for ln in text.splitlines()]
             lines = [ln for ln in lines if ln]
             if not lines or not lines[0].startswith("# "):
                 return None
@@ -63,6 +76,8 @@ class SearchRules:
             for ln in lines[1:]:
                 m = self._field.match(ln)
                 if not m or m.group("key") in fields:
+                    return None
+                if strict and m.group('key') not in self._known_fields:
                     return None
                 fields[m.group("key")] = m.group("value").strip()
             if name in cards:

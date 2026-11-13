@@ -23,6 +23,7 @@
   "status_labels": {
     "verified": "решена",
     "unverified": "не проверена",
+    "submitted_unchecked": "кандидат без независимой проверки",
     "unsolvable": "отказ модели",
     "skipped_infeasible": "невыполнима",
     "skipped_low_value": "невыгодна",

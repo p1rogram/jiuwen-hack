@@ -104,6 +104,14 @@ class GatewayTest(unittest.TestCase):
     def failed_input_cost(self):
         return math.ceil(prompt_chars(MESSAGES) / STAND["accounting"]["missing_usage_chars_per_token"]) * STAND["accounting"]["input_weight"]
 
+    def test_zero_budget_never_calls_server(self):
+        from harness.llm import BudgetExhausted
+        self.ledger = BudgetLedger(0)
+        with self.assertRaises(BudgetExhausted):
+            self.ask(self.gateway({}))
+        self.assertEqual(self.srv.bodies, [])
+        self.assertEqual(self.ledger.spent, 0)
+
     def test_model_map_sends_served_name_and_extra_body(self):
         self.ask(self.gateway(STAND["model_map"]))
         body = self.srv.bodies[-1]
@@ -157,7 +165,8 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(len(self.srv.bodies), 2)
         self.assertAlmostEqual(self.ledger.spent, reply.cost + self.failed_input_cost())
         kinds = [r["kind"] for r in self.calls()]
-        self.assertEqual(kinds, ["llm_attempt_error", "net_retry", "llm_call"])
+        self.assertEqual(kinds, ["llm_attempt_start", "llm_attempt_end", "llm_attempt_error", "net_retry",
+                                 "llm_attempt_start", "llm_attempt_end", "llm_call"])
 
     def test_retries_are_limited(self):
         self.srv.fail_codes = [502] * 10
@@ -182,7 +191,8 @@ class GatewayTest(unittest.TestCase):
             self.ask(self.gateway({}))
         self.assertEqual(len(self.srv.bodies), 1)
         self.assertAlmostEqual(self.ledger.spent, self.failed_input_cost())
-        self.assertEqual([r["kind"] for r in self.calls()], ["llm_attempt_error"])
+        self.assertEqual([r["kind"] for r in self.calls()],
+                         ["llm_attempt_start", "llm_attempt_end", "llm_attempt_error"])
 
 
 if __name__ == "__main__":

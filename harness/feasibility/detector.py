@@ -13,7 +13,8 @@ from harness.tasks import Task
 
 
 class FeasibilityDetector:
-    def __init__(self, cfg: dict[str, Any]):
+    def __init__(self, cfg: dict[str, Any], search_evidence: bool = False):
+        self._search_evidence = search_evidence
         self._common = ReferencedFilesCheck(cfg["files"])
         self._by_type = {
             "coding": CodingCheck(),
@@ -23,6 +24,8 @@ class FeasibilityDetector:
         }
 
     def check(self, task: Task) -> list[Signal]:
+        if self._search_evidence and task.task_type == 'search':
+            return [s for s in self._common.check(task) if s.severity == 'hard']
         signals: list[Signal] = []
         for checker in (self._common, self._by_type.get(task.task_type)):
             if checker is None:

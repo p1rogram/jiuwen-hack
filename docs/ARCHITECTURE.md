@@ -33,6 +33,8 @@
 | `harness/verifier.py` | бесплатная проверка результата по `check` (тесты, число, строка), вид провала (`no_code`, `script_error`, `tests_fail`, `bad_format`) или отказ модели `unsolvable` (маркер — вся последняя строка stdout), ответ из свежего `answer.txt` | — | test_runner, test_output |
 | `harness/executor.py` | запуск Python в папке задачи с таймаутом, без ключа API в env | — | — |
 | `harness/llm.py` | вызов модели через openjiuwen `Model`, семафор `max_inflight`, повтор при 429 и при обрыве/5xx (`network_*`), логическое имя → имя на сервере и поля тела (`model_map` профиля); вызов — событие `ModelCall` агента (`hooks`): допуск и списание делает рельса, шлюз — только если она этого не сделала (нет рельсы, сбой); нет `usage` — оценка по символам с запасом (`usage_missing`); ошибки попыток — отдельная оценка входа, допуск проверяется после семафора перед каждой попыткой | выбор модели | budget, calllog, model_call |
+| `harness/cooldown.py` | общий monotonic deadline после 429 в пределах LlmGateway; ожидание вне семафора и повторная проверка после получения слота; флаг llm.shared_429_cooldown по умолчанию false | retry-policy, списание, межпроцессную координацию | llm |
+| `harness/attempt_trace.py` | аддитивные llm_attempt_start/end: call_id + attempt, task/stage/model, monotonic время, deadline, ожидание gate/слота и класс ошибки; сбой телеметрии не меняет API-повторы | payload, ключи, списание | llm, calllog |
 | `harness/attempt_cost.py` | оценка входа каждой ошибочной попытки после входа в Model.invoke, списание и событие `llm_attempt_error` (только вход, не точный usage) | повторы, оценку неизвестного выхода, калибровку | budget, calllog, model_call |
 | `harness/model_call.py` | `ModelCall` (вход `BEFORE/AFTER_MODEL_CALL` openjiuwen + цена, usage), допуск по остатку (`admit`) и списание ровно один раз с записью `llm_call` (`settle`) | сам вызов | budget, calllog |
 | `harness/rails.py` (`TokenBudgetRail`) | рельса openjiuwen: до вызова — допуск (исчерпан — `AbortError` с причиной `BudgetExhausted`), после — списание и журнал | — | model_call |
@@ -79,3 +81,28 @@
 
 ## Кандидаты без видимых coding-тестов
 Prepared фиксирует исходные имена и содержимое test_*.py. Verifier возвращает accepted-кандидат с verification=unavailable после успешного действия, если исходного набора не было; это не ok/verified. Pipeline прекращает эскалацию и не вызывает SuccessModel.observe для unavailable. Outcome.unchecked даёт submitted_unchecked в JSONL, ответ сохраняется прежним ResultsWriter. Удаление/изменение исходных тестов — провал; FINAL без исполнения не создаёт кандидат.
+
+## Поиск со свидетельствами (2026-11-12)
+
+Экспериментальные флаги `search_retrieval`, `search_evidence`, `bounded_recovery` пока выключены. Зависимости флагов проверяет `search_config.validate`. Контроли A/B сохраняют старый search-допуск и runtime-learning; C/D используют новый пакет.
+
+- `search_corpus.py`: неизменяемые документы по относительным путям, SHA256, ограниченное чтение и явная неполнота. Не индексирует служебные/секретные файлы и внешние ссылки; исключения нечувствительны к регистру.
+- `search_access.py`: snapshot с номерами исходных строк, task-local visible ranges и непрозрачными курсорами; list/search/read ограничены страницей и размером JSON. Совпадения не материализуются целиком.
+- `search_answer.py`: единый строгий JSON parser и проверка существования/видимости/неизменности цитат. Допущенный результат — `model_supported`, это не доказательство семантической истинности.
+- `search_flow.py` / `search_pipeline.py`: тот же gateway, ledger/policy и stage2 budget/max_steps, один recovery на задачу. Stage1 context action переводит в stage2; recovery-retry не открывает stage2. Протокольное исправление ограничено единицей.
+- `Verdict.submission_allowed` сохраняет property accepted. В честном режиме format_only принят, но ok=false; `legacy_ok` отдельно сохраняет прежний технический сигнал non-search для SuccessModel. Search evidence не вызывает observe. Офлайн search без oracle в калибровку не попадает.
+- `run_agent.py`: writer получает только принятого кандидата (для A/B сохранён legacy search adapter). JSONL: accepted, verification, corpus/context completeness, stop_reason, recovery_count, limit_reason; submitted_unchecked различается по verification. Кодирование unavailable сохранено.
+
+Источник требований: `specs/evidence-safe-search/spec.md`; результаты и допуск флагов — `specs/evidence-safe-search/results.md`. Полнота корпуса не означает полноту предметного мира; корректность модели и расход проверяются внешними эталонами.
+
+## Диагностика поискового протокола (2026-11-12)
+
+`search_errors.py` задаёт контролируемые code/constraint/repair_hint и безопасный адрес поля. `Verdict.protocol_issue` — необязательный аддитивный словарь; позиционные конструкторы совместимы. `search_answer.evaluate` переводит только ожидаемые протокольные ошибки; неожиданные исключения остаются границе задачи.
+`search_diagnostics.record_rejection` пишет одно событие на отказ на обеих стадиях, без raw текста. Repair использует code/field/hint, общий fallback сохранён для старых Verdict. Изменённый источник завершает задачу с source_changed. Лимит одного repair, бюджет и число шагов сохранены. Local capture ещё не реализован.
+Источник: specs/search-regression-repair/spec.md, шаги 1–3; допуска кандидата пока нет.
+
+### Переменный бюджет (13.11.2026)
+Приоритет: --budget > BUDGET > TOKEN_BUDGET > config.budget_default. Явный ноль допускает бесплатные решения; некорректное явное значение останавливает запуск. tools/docker_run передаёт разрешённый бюджет в контейнер, tools/suite сохраняет ноль. Допуск платных задач использует оценочные резервы; уже начавшиеся параллельные вызовы могут превысить остаток после получения фактического usage.
+
+### Профиль deadline-balanced (13.11.2026)
+Явный профиль config/profiles/deadline-balanced.json включает search_retrieval и search_evidence, оставляет bounded_recovery выключенным; глобальные defaults не меняются. prompts/search_system.txt задаёт полный контракт трёх статусов и общие правила сравнения. search_errors/search_answer различают причины invalid_alternatives без изменения допуска. Выбор профиля — компромисс общей цены по development-замеру, не прохождение прежнего gate: на var1/var2 цена выше. Результаты и ограничения: specs/search-regression-repair/deadline-results-20261113.md. Профили не объединяются: Spark требует сохранения своего model_map и endpoint.

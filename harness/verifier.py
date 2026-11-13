@@ -40,10 +40,13 @@ class Verdict:
     problem: str = ""
     kind: str = ""
     verification: str = ""
+    submission_allowed: bool | None = None
+    legacy_ok: bool | None = None
+    protocol_issue: dict[str, str] | None = None
 
     @property
     def accepted(self) -> bool:
-        return self.ok or self.verification == "unavailable"
+        return (self.ok or self.verification == "unavailable") if self.submission_allowed is None else self.submission_allowed
 
 
 
@@ -54,7 +57,8 @@ def last_line(text: str) -> str:
 
 class Verifier:
     def __init__(self, error_tail_chars: int, unsolvable_marker: str | None = None, compact_tests: bool = False,
-                 column_probe: Callable[[Task, str], str | None] | None = None):
+                 column_probe: Callable[[Task, str], str | None] | None = None, honest_format: bool = False):
+        self._honest_format = honest_format
         self._tail = error_tail_chars
         self._compact = compact_tests
         self._column_probe = column_probe  # DataCheck.missing_declared; None — без остановки по KeyError
@@ -91,12 +95,16 @@ class Verifier:
             whole, _, frac = nums[-1].replace(",", "").partition(".")
             if frac.strip("0"):
                 return Verdict(False, nums[-1], f"expected an integer, got {nums[-1]!r}", BAD_FORMAT)
-            return Verdict(True, whole)
+            return self._format_answer(whole)
         if not line:
             return Verdict(False, "", "script printed nothing", BAD_FORMAT)
         # «Headquarters: Osaka» → «Osaka»; подпись — только буквы, поэтому «12:30» не трогаем
         m = LABEL_RE.match(line)
-        return Verdict(True, m.group(1).strip() if m else line)
+        return self._format_answer(m.group(1).strip() if m else line)
+
+    def _format_answer(self, answer: str) -> Verdict:
+        return Verdict(not self._honest_format, answer, verification='format_only',
+                       submission_allowed=True, legacy_ok=True)
 
     def _missing_column(self, task: Task, stderr: str) -> bool:
         if self._column_probe is None or "KeyError" not in stderr:
@@ -128,4 +136,4 @@ class Verifier:
                 out = res.stdout + res.stderr
                 tail = (compact_unittest(out) if self._compact else out)[-self._tail:]
                 return Verdict(False, "DONE", f"`unittest {name}` still fails:\n{tail}", TESTS_FAIL)
-        return Verdict(True, "DONE")
+        return Verdict(True, "DONE", verification='tests_passed')

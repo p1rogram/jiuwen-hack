@@ -8,7 +8,7 @@ from harness.outcome import Outcome
 from harness.prompting import Prepared
 from harness.solver import Stage1Solver
 from harness.success_model import RETRY, STAGE1, STAGE2, SuccessModel
-from harness.verifier import TERMINAL_KINDS, Verdict
+from harness.verifier import TERMINAL_KINDS, TRUNCATED, Verdict
 
 
 class Stage2(Protocol):
@@ -49,13 +49,19 @@ class TaskPipeline:
         self._log = log
 
     async def solve(self, prepared: Prepared, outcome: Outcome) -> Outcome:
+        if prepared.search and prepared.search.evidence_enabled:
+            from harness.search_pipeline import solve_search_pipeline
+            return await solve_search_pipeline(self, prepared, outcome)
         if self._forced is not None and self._s2 is not None:
             return await self._forced_stage2(prepared, outcome)
         t = prepared.task.task_type
         verdict = await self._s1.first(prepared, outcome)
-        self._apply(outcome, verdict, STAGE1)
+        self._apply_for(prepared, outcome, verdict, STAGE1)
         if verdict.verification != "unavailable":
-            self._success.observe(STAGE1, t, "", verdict.ok)
+            self._success.observe(STAGE1, t, "", verdict.ok if verdict.legacy_ok is None else verdict.legacy_ok)
+        if verdict.kind == TRUNCATED and prepared.bounded_recovery:
+            from harness.search_pipeline import recover_stage1
+            return await recover_stage1(self, prepared, outcome, verdict)
         allowed = self._allowed(outcome)
         # отказ модели, обрыв по потолку, отсутствующий столбец — конец задачи: ни повтора, ни этапа 2
         while not verdict.accepted and verdict.kind not in TERMINAL_KINDS and allowed:
@@ -72,8 +78,8 @@ class TaskPipeline:
                 verdict = await self._s2.solve(prepared, outcome, verdict, d.budget)
                 allowed = []  # после этапа 2 веток нет
             if verdict.verification != "unavailable":
-                self._success.observe(d.choice, t, kind, verdict.ok)
-            self._apply(outcome, verdict, d.choice)
+                self._success.observe(d.choice, t, kind, verdict.ok if verdict.legacy_ok is None else verdict.legacy_ok)
+            self._apply_for(prepared, outcome, verdict, d.choice)
         if self._review is not None and outcome.verified:
             await self._review.review(prepared, outcome)
         return outcome
@@ -86,7 +92,7 @@ class TaskPipeline:
         self._decided(prepared, outcome, d)
         if d.choice == STAGE2:
             verdict = await self._s2.solve(prepared, outcome, failed, d.budget)
-            self._apply(outcome, verdict, STAGE2)
+            self._apply_for(prepared, outcome, verdict, STAGE2)
         return outcome
 
     def _decided(self, prepared: Prepared, outcome: Outcome, d: Decision, problem: str = "") -> None:
@@ -110,13 +116,22 @@ class TaskPipeline:
         return out
 
     @staticmethod
+    def _apply_for(prepared: Prepared, outcome: Outcome, verdict: Verdict, branch: str) -> None:
+        legacy = prepared.task.task_type == 'search' and not (prepared.search and prepared.search.evidence_enabled)
+        previous = outcome.answer
+        TaskPipeline._apply(outcome, verdict, branch)
+        if legacy and verdict.kind not in TERMINAL_KINDS:
+            outcome.answer = verdict.answer or previous
+
+    @staticmethod
     def _apply(outcome: Outcome, verdict: Verdict, branch: str) -> None:
-        if verdict.answer:
-            outcome.answer = verdict.answer
+        outcome.answer = verdict.answer if verdict.accepted else ''
         if verdict.kind in TERMINAL_KINDS:
             outcome.answer = ""  # ответ прошлой попытки не сдаём: данных для ответа нет
         outcome.unchecked = verdict.verification == "unavailable"
         outcome.verified = verdict.ok
+        outcome.accepted = verdict.accepted
+        outcome.verification = verdict.verification or ('tests_passed' if verdict.ok and verdict.answer == 'DONE' else 'format_only' if verdict.ok else '')
         outcome.problem, outcome.failure = ("", "") if verdict.accepted else (verdict.problem, verdict.kind)
         if verdict.accepted:
             outcome.solved_by = branch

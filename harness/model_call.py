@@ -45,6 +45,7 @@ class ModelCall(ModelCallInputs):
             "reasoning_chars": self.reasoning_chars, "content_chars": self.content_chars,
             "cost": round(self.cost, 1), "latency_sec": round(self.latency_sec, 2),
             "budget_spent": round(budget_spent, 1),
+            'finish_reason': getattr(self.response, 'finish_reason', None),
             **({"usage_missing": True} if self.usage_missing else {}),
         }
 

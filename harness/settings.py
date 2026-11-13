@@ -88,23 +88,23 @@ def load_settings_raw(profile: str | None = None) -> dict[str, Any]:
         overlay = json.loads((PROFILES_DIR / f"{profile}.json").read_text(encoding="utf-8"))
         overlay.pop("_comment", None)
         raw = merge_profile(raw, overlay)
+    from harness.search_config import validate
+    validate(raw)
     return raw
 
 
 def parse_budget(value: str | None, default: float) -> float:
-    """BUDGET из окружения: «100000», «100 000», «100_000», «100k»; не разобралось — умолчание со строкой в stderr
-    (падение до старта стоило бы всех задач)."""
-    if not value:
-        return default
+    """Явный бюджет конечен и неотрицателен; только отсутствие допускает default."""
+    if value is None:
+        value = str(default)
     text = value.strip().lower().replace(" ", "").replace("_", "").replace(",", "")
     scale = 1000.0 if text.endswith("k") else 1.0
     try:
         result = float(text.removesuffix("k")) * scale
     except ValueError:
         result = -1.0
-    if not math.isfinite(result) or result <= 0:
-        print(f"BUDGET={value!r} not understood, using {default:g}", file=sys.stderr)
-        return default
+    if not math.isfinite(result) or result < 0:
+        raise SystemExit("BUDGET must be a finite non-negative number")
     return result
 
 
@@ -128,8 +128,8 @@ def load_settings(budget: float | None = None, out: str | None = None, profile: 
               file=sys.stderr)
     out_value = out or os.environ.get("OUT")
     log_dir = Path(os.environ.get("HARNESS_LOG_DIR") or (ROOT / raw["log_dir_default"]))
-    env_budget = os.environ.get("BUDGET") or os.environ.get("TOKEN_BUDGET")
-    final_budget = budget if budget is not None else parse_budget(env_budget, float(raw["budget_default"]))
+    env_budget = os.environ.get("BUDGET", os.environ.get("TOKEN_BUDGET"))
+    final_budget = parse_budget(str(budget) if budget is not None else env_budget, float(raw["budget_default"]))
     return Settings(raw=raw, base_url=base_url.rstrip("/"), api_key=api_key,
                     out_path=Path(out_value) if out_value else None,
                     log_dir=log_dir, budget=final_budget, profile=name, llm_ready=llm_ready)

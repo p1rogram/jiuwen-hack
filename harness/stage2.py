@@ -20,7 +20,7 @@ from harness.prompting import Prepared, prompt_chars
 from harness.settings import load_prompt
 from harness.solver import extract_code
 from harness.test_output import compact_unittest
-from harness.verifier import NO_CODE, TESTS_FAIL, Verdict, Verifier
+from harness.verifier import NO_CODE, TESTS_FAIL, TRUNCATED, Verdict, Verifier
 
 FINAL_RE = re.compile(r"^\s*FINAL:\s*(.+?)\s*$", re.MULTILINE)
 # «та же ошибка» — та же строка исключения: путь кода к ней и номера строк после правки меняются.
@@ -51,7 +51,8 @@ def final_answer(text: str) -> str | None:
 
 class Stage2Solver:
     def __init__(self, gateway: LlmGateway, verifier: Verifier, cost: CostModel, model: str, cfg: dict[str, Any],
-                 patch_types: list[str] | None = None):
+                 patch_types: list[str] | None = None, log=None):
+        self._log = log
         self._gw = gateway
         # у типов с ответом-правкой модель и на этапе 2 пишет блоки `# file:` — их вклеиваем, а не запускаем
         self._patch_types = set(patch_types or [])
@@ -73,6 +74,9 @@ class Stage2Solver:
 
     async def solve(self, prepared: Prepared, outcome: Outcome, failed: Verdict, budget: float) -> Verdict:
         """budget — потолок расхода этапа 2 (high ветки): шаг, который может его превысить, не начинается."""
+        if prepared.search and prepared.search.evidence_enabled:
+            from harness.search_flow import solve_search
+            return await solve_search(self, prepared, outcome, failed, budget)
         task = prepared.task
         messages = list(outcome.messages) + [
             {"role": "user", "content": self._start.format(problem=failed.problem, max_steps=self._max_steps)}]
@@ -89,6 +93,16 @@ class Stage2Solver:
             outcome.add_call(self._model, stage, reply)
             outcome.stage2_steps = step
             messages.append({"role": "assistant", "content": reply.text})
+            if prepared.bounded_recovery:
+                from harness.search_flow import truncated
+                if truncated(reply, self._max_tokens):
+                    outcome.limit_reason = 'confirmed_length' if getattr(reply, 'finish_reason', None) == 'length' else 'suspected_limit'
+                    verdict = Verdict(False, '', 'output limit', TRUNCATED)
+                    if outcome.recovery_count:
+                        return self._stop(outcome, 'output_limit', verdict)
+                    outcome.recovery_count += 1
+                    messages.append(dict(role='user', content=load_prompt('recovery.txt')))
+                    continue
             code, final = extract_code(reply.text), final_answer(reply.text)
             blocks = find_patch(reply.text, task.workspace) if task.task_type in self._patch_types else None
             if blocks:
@@ -134,7 +148,7 @@ class Stage2Solver:
         строки и проходит проверку; распечатка файла и вывод тестов ответом не бывают."""
         if task.check != "unittest" and run.ok and len(run.stdout.strip().splitlines()) == 1:
             answered = await self._verifier.check(task, run)
-            if answered.ok:
+            if answered.accepted:
                 return self._stop(outcome, "repeat_answer", answered)
         return self._stop(outcome, "repeat_command", verdict)
 

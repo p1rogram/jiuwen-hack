@@ -64,6 +64,8 @@ def read_run(tasks_dir: Path, log: Path, prefix: str) -> dict[str, dict[str, Any
         ok, _ = judge_labeled(tj.parent, data, {tid: label} if label else {})
         task = c["task"]
         rows[("" if prefix == "-" else prefix) + folder] = {
+            'submitted': bool(task.get('accepted', task.get('status') in ('verified', 'submitted_unchecked'))),
+            'verification': task.get('verification', ''),
             "ok": ok, "first_try": ok and task.get("solved_by") == "stage1" and task.get("attempts") == 1,
             "cost": c["cost"], "out11": c["out11"], "shape": c["shape"], "variant": label.get("variant"),
             "feasible": label.get("feasible", True),
@@ -85,6 +87,8 @@ def merge_run(arm: dict[str, dict[str, Any]], run: dict[str, dict[str, Any]]) ->
 def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     shapes = [r["shape"] for r in rows if r["shape"]]
     out: dict[str, Any] = {
+        'submitted': sum(r.get('submitted', False) for r in rows),
+        'externally_correct': sum(r['ok'] for r in rows),
         "tasks": len(rows), "feasible": sum(r["feasible"] for r in rows), "solved": sum(r["ok"] for r in rows), "first_try": sum(r["first_try"] for r in rows),
         "cost": round(sum(r["cost"] for r in rows), 1), "out11_mean": round(mean(r["out11"] for r in rows), 1)
         if rows else 0.0,

@@ -67,19 +67,24 @@ class Harness:
                              self.ledger, self.log, settings.raw["model_map"],
                              acc["missing_usage_chars_per_token"])
         stage1_cfg = settings.section("stage1")
+        self.search_evidence = settings.raw.get('search_evidence', {}).get('enabled', False)
+        snapshot_cfg = dict(settings.section('snapshot'))
+        snapshot_cfg['search_retrieval'] = dict(settings.raw.get('search_retrieval', {}),
+            evidence_enabled=self.search_evidence,
+            recovery_enabled=settings.raw.get('bounded_recovery', {}).get('enabled', False))
         marker = stage1_cfg["unsolvable_marker"] if stage1_cfg["unsolvable_enabled"] else None
-        self.prompt = Stage1Prompt(WorkspaceSnapshot(settings.section("snapshot")), marker, stage1_cfg["tail_prompts"],
+        self.prompt = Stage1Prompt(WorkspaceSnapshot(snapshot_cfg), marker, stage1_cfg["tail_prompts"],
                                    stage1_cfg["patch_types"], stage1_cfg["patch_prompts"])
         feas = settings.section("feasibility")
-        self.detector = FeasibilityDetector(load_config(feas["config_file"])) if feas["enabled"] else None
+        self.detector = FeasibilityDetector(load_config(feas["config_file"]), self.search_evidence) if feas["enabled"] else None
         self.skip_severities = feas["skip_severities"]
         verifier = Verifier(stage1_cfg["error_tail_chars"], marker, bool(stage1_cfg.get("compact_test_output", False)),
-                            self.detector.missing_column if self.detector else None)
+                            self.detector.missing_column if self.detector else None, honest_format=self.search_evidence)
         models = settings.section("models")
         stage1 = Stage1Solver(gateway, self.prompt, verifier, model or models["stage1"], stage1_cfg, self.log)
         cost_model = CostModel(load_config(settings.raw["cost_model_file"]), acc["input_weight"])
         stage2 = Stage2Solver(gateway, verifier, cost_model, model or models["stage2"], settings.section("stage2"),
-                              stage1_cfg["patch_types"])
+                              stage1_cfg["patch_types"], log=self.log)
         success = SuccessModel(load_config(settings.raw["success_model_file"]))
         self.policy = DecisionPolicy(success, cost_model, self.ledger)
         cross_cfg = settings.section("crosscheck")
@@ -102,6 +107,10 @@ class Harness:
         self.llm_ready = settings.llm_ready
 
     async def run(self, tasks: list[Task]) -> list[dict]:
+        if getattr(self, 'search_evidence', False):
+            roots = [t.workspace.resolve() for t in tasks]
+            if len(roots) != len(set(roots)):
+                raise ValueError('duplicate task workspace')
         self.log.write({"kind": "run_start", "tasks": len(tasks), "budget": self.ledger.total,
                         **({"profile": self.profile} if self.profile else {})})
         sem = asyncio.Semaphore(self.parallel)
@@ -144,6 +153,8 @@ class Harness:
 
     async def _prepare(self, task: Task) -> Prepared | dict:
         signals: list[Signal] = []
+        search = (self.prompt._snapshot.search_context(task)
+                  if getattr(self, 'search_evidence', False) and task.task_type == 'search' else None)
         if self.detector:
             # сбой детектора — не повод бросать задачу: решаем её без сигналов
             try:
@@ -156,12 +167,16 @@ class Harness:
                 return self._record({"task_id": task.task_id, "type": task.task_type, "reward": task.reward,
                                      "status": "skipped_infeasible", "signals": [s.as_dict() for s in signals]})
             # этап 0: условие целиком по шаблону — ответ кодом, 0 токенов; при сигнале детектора вне rules.soft_ok — обычный путь
-            answer = await asyncio.to_thread(self.rules.solve, task) if self.rules and self.rules.accepts(signals) else None
+            if self.rules and self.rules.accepts(signals):
+                answer = await asyncio.to_thread(self.rules.solve, task, search.corpus) if search else await asyncio.to_thread(self.rules.solve, task)
+            else:
+                answer = None
             if answer is not None:
                 return self._record({"task_id": task.task_id, "type": task.task_type, "reward": task.reward,
                                      "status": "verified", "answer": answer, "solved_by": "rules", "cost": 0,
+                                     'verification': 'rule_checked', 'accepted': True,
                                      **write_error(self.writer.record(task, answer))})
-            prepared = await self.prompt.build(task)
+            prepared = await self.prompt.build(task, search=search) if search else await self.prompt.build(task)
         except Exception as exc:  # одна упавшая задача не должна валить прогон: фаза A общая для всех
             return self._record({"task_id": task.task_id, "status": "error",
                                  "error": f"prepare {type(exc).__name__}: {exc}"[:500]})
@@ -209,10 +224,21 @@ class Harness:
         finally:
             # поправка модели расхода этапа 1 — только по его первому вызову (в --force-stage2 его нет)
             self.planner.finish(prepared, outcome.first_stage1_call())
-        written = self.writer.record(task, outcome.answer) if outcome.answer else self.writer.discard(task)
+        accepted = outcome.accepted or outcome.verified or outcome.unchecked
+        legacy_search = task.task_type == 'search' and not getattr(self, 'search_evidence', False)
+        written = self.writer.record(task, outcome.answer) if (accepted or legacy_search) and outcome.answer else self.writer.discard(task)
         status = "submitted_unchecked" if outcome.unchecked else "verified" if outcome.verified else "unsolvable" if outcome.failure == UNSOLVABLE else "unverified"
+        if outcome.accepted and outcome.verification == 'model_supported':
+            status = 'submitted_unchecked'
+        elif outcome.accepted and outcome.verification == 'format_only' and not outcome.verified:
+            status = 'submitted_unchecked'
         return self._record({**head, "status": status,
-                             **({"verification": "unavailable"} if outcome.unchecked else {}),
+                             'verification': outcome.verification, 'accepted': accepted,
+                             'recovery_count': outcome.recovery_count,
+                             'stop_reason': outcome.stage2_stop or outcome.failure or ('accepted' if accepted else 'unknown'),
+                             'limit_reason': outcome.limit_reason,
+                             **({'corpus_complete': prepared.search.corpus.complete,
+                                 'context_complete': prepared.search.context_complete} if prepared.search else {}),
                              "answer": outcome.answer, "solved_by": outcome.solved_by, "attempts": outcome.attempts,
                              "cost": round(outcome.cost, 1),
                              "problem": outcome.problem[:300], "failure": outcome.failure,

@@ -23,11 +23,11 @@ class RulesSolver:
         (data: месяцы за 12, значения фильтра нет в CSV — ответ «0», как у LLM); любой другой — обычный путь."""
         return all(s.code in self._soft_ok for s in signals)
 
-    def solve(self, task: Task) -> str | None:
+    def solve(self, task: Task, corpus=None) -> str | None:
         solver = self._by_type.get(task.task_type)
         if solver is None:
             return None
         try:
-            return solver.solve(task)
+            return solver.solve(task, corpus) if task.task_type == 'search' and corpus is not None else solver.solve(task)
         except Exception:  # noqa: BLE001 — сбой разбора: задачу решит обычный путь
             return None

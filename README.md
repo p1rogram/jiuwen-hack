@@ -8,13 +8,13 @@
 ```bash
 docker build -t jiuwen-harness .
 docker run --rm --read-only --tmpfs /tmp:rw,size=2g --cap-drop ALL --cpus 8 --memory 16g --pids-limit 512 \
-  -e LLM_BASE_URL -e LLM_API_KEY -e OUT=/data/out/answers.json \
+  -e LLM_BASE_URL -e LLM_API_KEY -e BUDGET -e OUT=/data/out/answers.json \
   -v "$TASKS:/data/tasks" -v "$PWD/out:/data/out" \
   jiuwen-harness python /app/run_agent.py --tasks-dir /data/tasks
 ```
 
 Необязательные переменные: `BUDGET` — бюджет в выходных токенах (без неё и без `--budget` — 100 000, ориентир
-организаторов); `HARNESS_LOG_DIR` — журнал вызовов
+организаторов). Приоритет: `--budget` > `BUDGET` > `TOKEN_BUDGET` > config. Ноль разрешает только бесплатные решения; пустое, отрицательное, некорректное или бесконечное значение останавливает запуск; `HARNESS_LOG_DIR` — журнал вызовов
 (по умолчанию `/tmp/harness-logs`).
 Локально: `python tools/docker_run.py <tasks-dir> <out-dir>`. Ключ берётся из `.env` и передаётся в контейнер
 по имени переменной.
@@ -153,3 +153,6 @@ coding_0007: решена, цена 287, ответ 'DONE'                   и�
 и невыполнимые 16 видов. Оценка детектора без LLM — `python -m tools.gen.eval_detector <dir>`, отчёт прогона —
 `python -m tools.gen.report <dir> logs/run-*.jsonl`. Прогон на 60 задачах (12 невыполнимых): 151 из 151 возможного
 балла, 48/48 выполнимых, 19.4 тыс. выходных токенов (из них 0.5 тыс. — на спорные невыполнимые, которые по политике решаются).
+
+### Замеренный профиль на 13.11.2026
+Для компромисса качества и общей цены: --profile deadline-balanced; бюджет берётся из BUDGET (явный --budget имеет приоритет). Профиль включает полный поиск и строгий evidence-протокол, recovery выключен. На четырёх development-наборах цена в сумме ниже, но на старых наборах выше; подробности specs/search-regression-repair/deadline-results-20261113.md. Это не гарантия ничьей на каждом наборе. Для Spark этот профиль отдельно не применять: профили не складываются, нужны сохранённые настройки сервера и model_map.

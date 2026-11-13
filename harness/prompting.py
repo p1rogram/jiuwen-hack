@@ -18,6 +18,8 @@ class Prepared:
     task: Task
     messages: list[dict[str, str]]
     signals: list[Any] = field(default_factory=list)  # soft-сигналы детектора — в журнал задачи
+    search: Any = None
+    bounded_recovery: bool = False
 
     visible_tests: tuple[tuple[str, bytes], ...] = field(init=False, repr=False)
 
@@ -53,8 +55,18 @@ class Stage1Prompt:
     def is_patch(self, task_type: str) -> bool:
         return task_type in self._patch_types
 
-    async def build(self, task: Task) -> Prepared:
-        snap = await self._snapshot.build(task)
+    async def build(self, task: Task, search=None) -> Prepared:
+        if task.task_type == 'search' and getattr(self._snapshot, 'search_cfg', {}).get('enabled', False):
+            access = search or self._snapshot.search_context(task)
+            access.evidence_enabled = self._snapshot.search_cfg.get('evidence_enabled', False)
+            access.recovery_enabled = self._snapshot.search_cfg.get('recovery_enabled', False)
+            snap = access.snapshot(task.instruction, self._snapshot.search_snapshot_cfg())
+            if access.evidence_enabled:
+                return Prepared(task, [dict(role='system', content=load_prompt('search_system.txt')),
+                                       dict(role='user', content=task.instruction + '\n\n' + snap)], search=access)
+        else:
+            access = None
+            snap = await self._snapshot.build(task)
         user = self._user_tpl.format(instruction=task.instruction, snapshot=snap)
         tail = self._tails.get(task.task_type)
         if tail:
@@ -63,7 +75,7 @@ class Stage1Prompt:
         return Prepared(task, [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
-        ])
+        ], search=access, bounded_recovery=getattr(self._snapshot, 'search_cfg', {}).get('recovery_enabled', False))
 
     def retry(self, problem: str, task_type: str = "") -> dict[str, str]:
         tpl = self._patch_retry_tpl if self.is_patch(task_type) else self._retry_tpl
